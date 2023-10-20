@@ -91,7 +91,7 @@ for i=1:num_sym
 end
 % [sv_rs, sv, fourier] = LORA.delorax_modified( mod_chirp, num_sym);
 % [hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( mod_chirp, num_sym);
-
+%
 
 % check_data;
 % sv_rs
