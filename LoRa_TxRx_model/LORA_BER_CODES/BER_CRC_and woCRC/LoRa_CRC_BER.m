@@ -2,7 +2,7 @@ clc
 clear all
 close all
 
-
+return
 tic
 
 %% ================================= Переменные
