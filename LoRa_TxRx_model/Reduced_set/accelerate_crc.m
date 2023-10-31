@@ -72,11 +72,13 @@ check_data
 delay1 = 32;
 delay2 = 68;
 % mod_chirp = mod_chirp + [zeros(1,delay1), mod_chirp(1:end-delay1)] + [zeros(1,delay2), mod_chirp(1:end-delay2)];
-% mod_chirp = awgn(mod_chirp, -0, 'measured', 17);
+mod_chirp = awgn(mod_chirp, -0, 'measured', 17);
 
 %% ================================= Демодуляция
 for i=1:num_sym
     d = [-1, 1, -1];
+%     d = gausswin(9).';
+%     d(1:2:end)=0;
 %     d = repmat(d,1,64);
     fourier(i,:) = abs(fft(mod_chirp(Base*i-Base+1:Base*i).*downch)); 
     fourier_rs = abs(filtfilt( d/8, 1, fourier(i,:).*1 ));
@@ -99,94 +101,33 @@ end
 hard_bits = int2bit(sv.', rc).';
 err = sum(hard_bits~=data)
 
-% [fourier_rc] = reduced_set_fourier(fourier, Base_rc, rc_factor, LORA);
-% [fourier_rc] = LORA.reduced_set_fourier(fourier);
-%
+
+
 figure(1); hold on
-
-stem(fourier_rs, 'b')
-stem( abs(fft(fourier(i,:).')), 'r')
+% plot( real(wt) )
+stem( fourier_rs, 'b')
+stem( fourier(i,:).', 'r')
 return
 
 
 
-function [sv, sv_cor, peakMakcor, dbits] = HARD_CRC_DEMOD( fourier_rs, LORA, rs_int_crc_lut)
-aos = 1;
-aos_win = -aos:aos;
-Base = 8;
-grayCode = LORA.grayCode;
-SF = 7;
-
-    % ~~~~~~~~ Initial conditions ~~~~~~~~
-    check_crc = 1;
-
-    % ~~~~~~~~ CRC Demodulation ~~~~~~~~
-    while check_crc~=0
-    
-        % Circular shift in peak search
-        [~, indexMax] = max( fourier_rs ); % находим щелчок  частоты в чирпе
-        sv = indexMax;
-
-        
-        peak_win = indexMax+aos_win;
-
-        for pk=1:length(peak_win)
-            if(peak_win(pk)<=0)
-                peak_win(pk)=peak_win(pk)+Base;
-            end
-            if(peak_win(pk)>Base)
-                peak_win(pk)=peak_win(pk)-Base;
-            end
+function [y] = my_fft(x)
+    N = length(x);
+    y = zeros(1,N);
+    for k=1:N
+        for j=1:N
+            y(k) = y(k)+x(j).*exp(-1i*2*pi*k*j/N);
         end
+    end
+end
 
-
-        % Set type of the peak sort
-        peaks_amp = fourier_rs(peak_win);
-        peak_sort = zeros(1,2*aos+1);
-        peak_sort(1) = indexMax;
-
-        for pk=1:aos
-            if( peaks_amp(aos+1+pk)>peaks_amp(aos+1-pk) )
-                peak_sort(2*pk)       = peak_win(aos+1+pk);
-                peak_sort(2*(pk+1)-1) = peak_win(aos+1-pk);
-            else
-                peak_sort(2*pk)       = peak_win(aos+1-pk);
-                peak_sort(2*(pk+1)-1) = peak_win(aos+1+pk);
-            end
+function [y] = my_chirplet(x)
+    N = length(x);
+    y = zeros(1,N);
+    m=1/(N^1);
+    for k=1:N
+        for j=1:N
+            y(k) = y(k)+x(j).*exp(-1i*2*pi*k*m*j.^2/2 );
         end
-
-        sort_amp = fourier_rs(peak_sort);
-        peak_sort(sort_amp==0)=[];
-        sort_amp(sort_amp==0)=[];
-
-% dbits
-% check_crc
-
-
-        % Search peak according to the crc
-        for n=1:length(peak_sort)
-%             sv_cor = find(grayCode==peak_sort(n)-1)-1
-            sv_cor = rs_int_crc_lut(LORA.grayCode(peak_sort(n))+1);
-
-
-            dbits = int2bit(sv_cor', SF)';
-
-            check_crc = sum(LORA.CRC4(dbits.').');
-
-% sv_cor
-check_crc
-figure(1)
-plot(fourier_rs)
-% return
-            if(check_crc==0)
-                peakMakcor = sort_amp(n);
-                break
-            else
-                fourier_rs(peak_sort(n))=0;
-            end
-        end
-figure(2)
-plot(fourier_rs)
-return
     end
 end

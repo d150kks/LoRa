@@ -23,6 +23,7 @@ chirp = LORA.chirp;
 Ts = LORA.Ts;
 ts = LORA.ts;
 
+
 num_pre = 8;
 num_sym = Base_rc;
 % nbits = b2s*num_sym; 
@@ -34,17 +35,70 @@ data = int2bit(datade.', rc).';
 %% ================================= CRC-RS LUT
 rs_peaks_lut = (0:Base_rc-1);
 rs_gray_lut = LORA.grayCode(rs_peaks_lut+1);
-rs_int_lut = int2bit(rs_gray_lut.', rc).';
-rs_crc_lut = LORA.codeCRC(rs_int_lut, Base_rc);
-rs_int_crc_lut = bit2int(rs_crc_lut.', SF).'
-rs_lut = rs_peaks_lut*rc_factor;
 
 
+m = LORA.m;
+t = LORA.t;
+ncof = 2*pi*m*(Ts-ts)^2/2;
+
+arg = (2*pi*(0 + (m*t.^2)/2));
+arg_shift = circshift(arg, 128-16);
+% arg_shift = (circshift(arg, 128-16)+circshift(arg, 128-15)+circshift(arg, 128-14)+circshift(arg, 128-17))/4;
+freq = cos(arg);
+freq2 = exp( 1i*arg_shift );
+% freq2 = exp( 1i*arg );
+% freq2 = (circshift(freq2, 128-16).*exp( 1i*7*pi/4 )+circshift(freq2, 128-15).*exp( 1i*pi/4 )+circshift(freq2, 128-14).*exp( 1i*3*pi/4 )+circshift(freq2, 128-17).*exp( 1i*5*pi/4 ))/4;
+
+
+%% ================================= Помехи
+delay1 = 32;
+delay2 = 64;
+freq2 = freq2 + 1.*[zeros(1,delay1), freq2(1:end-delay1)] + 1.*[zeros(1,delay2), freq2(1:end-delay2)];
+freq2 = awgn(freq2, 0, 'measured');
+
+%% ================================= Обработка
+% H(w) = (1 - z^(-D))^N / (1 - z^-1)^N
+D = 64;
+b = [1 zeros(1,D-1) -1];
+% b = repmat(b,1,2);
+a = [-1 -1];
+[h,w] = freqz(b, a, Base);
+h = (flip(h)+h)/2;
+% h = fft( [1, 1, zeros(1,Base-2)]).';
+% h = fft( [1, -1, 1, zeros(1,Base-3)]).';
+% h = fft( [ 1, 1, 1, zeros(1,Base-6), -1,-1, -1]).';
+
+
+
+mf = freq2.*downch;
+% mf_int = filtfilt(b, a,  mf);
+demod = abs(fft(mf));
+demod_filt = abs(fft(mf.*(h.')));
+
+
+figure(1); hold on
+% plot( arg_shift )
+% plot( real(freq2))
+% plot( real(mf) )
+% plot( real(mf_int) )
+% plot( 10*log10(demod) )
+% plot( 10*log10(demod_filt) )
+% % plot( 10*log10(abs(fft(sig2))) )
+% plot( max(10*log10(demod_filt)).*(abs(h))./max(abs(h)) )
+
+plot( (demod) )
+plot( (demod_filt) )
+plot( max((demod_filt)).*(abs(h))./max(abs(h)) )
+
+% figure(2)
+% plot( abs(ifft(h)))
+
+return
 %% ================================= CRC
 % num_sym = 1;
 % data = [1 0 1];
 % data = [0 0 1 0 0 0 0];
-data_crc = LORA.codeCRC(data, num_sym);
+% data_crc = LORA.codeCRC(data, num_sym);
 
 % data_crc_bad = [1 0 1 1 1 1 0]
 % sum(LORA.CRC4(data_crc_bad.').')
@@ -56,9 +110,11 @@ mod_chirp = zeros(1, num_sym*Base);           % чирпы
 
 % Модуляция
 for i = 1:num_sym
-    code_word = bit2int(data_crc(SF*i-SF+1:SF*i).', SF);      % значение кодового слова
-    code_word_rs = rs_lut(rs_int_crc_lut==code_word);
+    code_word = bit2int(data(rc*i-rc+1:rc*i).', rc);      % значение кодового слова
+
+    code_word_rs = (rs_peaks_lut(code_word==rs_gray_lut))*rc_factor;
     check_data(i) = code_word_rs;
+    code_word_data(i) = code_word;
 
     cs = single((code_word_rs/Base)*Ts/ts);             % место сдвига
     chirp1 = chirp(cs+1:end); % первый чирп
@@ -67,114 +123,68 @@ for i = 1:num_sym
 
 end 
 % check_data
-[mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data_crc, num_sym);
-mod_chirp = circshift(mod_chirp, 8);
-% check_data
-% return
+[mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data, num_sym);
+% mod_chirp = circshift(mod_chirp, 8);
+check_data
+delay1 = 32;
+delay2 = 68;
+% mod_chirp = mod_chirp + [zeros(1,delay1), mod_chirp(1:end-delay1)] + [zeros(1,delay2), mod_chirp(1:end-delay2)];
+mod_chirp = awgn(mod_chirp, -0, 'measured', 17);
 
 %% ================================= Демодуляция
 for i=1:num_sym
-    fourier(i,:) = abs(fft(mod_chirp(Base*i-Base+1:Base*i).*downch));   
-    fourier_rs = LORA.reduced_set_fourier(fourier(i,:));
-    [~, indexMax] = max( fourier(i,:) ); % находим щелчок  частоты в чирпе
-%     sv_rs(i) = ( LORA.grayCode(indexMax)+1 );
+    d = [-1, 1, -1];
+%     d = gausswin(9).';
+%     d(1:2:end)=0;
+%     d = repmat(d,1,64);
+    fourier(i,:) = abs(fft(mod_chirp(Base*i-Base+1:Base*i).*downch)); 
+    fourier_rs = abs(filtfilt( d/8, 1, fourier(i,:).*1 ));
+    fourier_rs = 128*fourier_rs./max(fourier_rs);
+    fourier_rs2 = LORA.reduced_set_fourier( fourier_rs );
 
-    [sv, sv_cor, peakMakcor, dbits] = HARD_CRC_DEMOD( fourier(i,:), LORA, rs_int_crc_lut);
-    sv_cor
-    sv_rs(i) = rs_lut(sv_cor==rs_int_crc_lut);
-% return
+%     fourier_rs = LORA.reduced_set_fourier(fourier(i,:));
+    [~, indexMax] = max( fourier_rs2 ); % находим щелчок  частоты в чирпе
+    sv(i) = LORA.grayCode(indexMax);
+    sv_rs(i) = sv(i)*rc_factor;
+
 end
-% [sv_rs, ~, ~] = LORA.delorax_crcrs( mod_chirp, num_sym );
-
+% [sv_rs, sv, fourier] = LORA.delorax_modified( mod_chirp, num_sym);
+% [hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( mod_chirp, num_sym);
+%
 
 % check_data;
 % sv_rs
-sv_rs_crc = int2bit(sv_rs', SF)';
-[data_decode] = LORA.decodeCRC(sv_rs_crc, num_sym, 0, 0);
-% sv_bits = int2bit(sv_rs.', rc).';
-% err = sum(data_decode~=data)
+% [data_decode] = LORA.decodeCRC(sv_rs_crc, num_sym, 0, 0);
+hard_bits = int2bit(sv.', rc).';
+err = sum(hard_bits~=data)
 
-% [fourier_rc] = reduced_set_fourier(fourier, Base_rc, rc_factor, LORA);
-% [fourier_rc] = LORA.reduced_set_fourier(fourier);
-%
+
+
 figure(1); hold on
-% stem(fourier.')
-stem(fourier_rs)
+% plot( real(wt) )
+stem( fourier_rs, 'b')
+stem( fourier(i,:).', 'r')
+return
 
 
 
-function [sv, sv_cor, peakMakcor, dbits] = HARD_CRC_DEMOD( fourier_rs, LORA, rs_int_crc_lut)
-aos = 1;
-aos_win = -aos:aos;
-Base = 128;
-grayCode = LORA.grayCode;
-SF = 7;
-
-    % ~~~~~~~~ Initial conditions ~~~~~~~~
-    check_crc = 1;
-
-    % ~~~~~~~~ CRC Demodulation ~~~~~~~~
-    while check_crc~=0
-    
-        % Circular shift in peak search
-        [~, indexMax] = max( fourier_rs ); % находим щелчок  частоты в чирпе
-        sv = indexMax;
-
-        
-        peak_win = indexMax+aos_win;
-
-        for pk=1:length(peak_win)
-            if(peak_win(pk)<=0)
-                peak_win(pk)=peak_win(pk)+Base;
-            end
-            if(peak_win(pk)>Base)
-                peak_win(pk)=peak_win(pk)-Base;
-            end
+function [y] = my_fft(x)
+    N = length(x);
+    y = zeros(1,N);
+    for k=1:N
+        for j=1:N
+            y(k) = y(k)+x(j).*exp(-1i*2*pi*k*j/N);
         end
+    end
+end
 
-
-        % Set type of the peak sort
-        peaks_amp = fourier_rs(peak_win);
-        peak_sort = zeros(1,2*aos+1);
-        peak_sort(1) = indexMax;
-
-        for pk=1:aos
-            if( peaks_amp(aos+1+pk)>peaks_amp(aos+1-pk) )
-                peak_sort(2*pk)       = peak_win(aos+1+pk);
-                peak_sort(2*(pk+1)-1) = peak_win(aos+1-pk);
-            else
-                peak_sort(2*pk)       = peak_win(aos+1-pk);
-                peak_sort(2*(pk+1)-1) = peak_win(aos+1+pk);
-            end
-        end
-
-        sort_amp = fourier_rs(peak_sort);
-        peak_sort(sort_amp==0)=[];
-        sort_amp(sort_amp==0)=[];
-
-% dbits
-% check_crc
-
-
-        % Search peak according to the crc
-        for n=1:length(peak_sort)
-%             sv_cor = find(grayCode==peak_sort(n)-1)-1
-            sv_cor = rs_int_crc_lut(LORA.grayCode(peak_sort(n))+1);
-
-sv_cor
-            dbits = int2bit(sv_cor', SF)';
-
-            check_crc = sum(LORA.CRC4(dbits.').');
-
-% sv_cor
-% check_crc
-% return
-            if(check_crc==0)
-                peakMakcor = sort_amp(n);
-                break
-            else
-                fourier_rs(peak_sort(n))=0;
-            end
+function [y] = my_chirplet(x)
+    N = length(x);
+    y = zeros(1,N);
+    m=1/(N^1);
+    for k=1:N
+        for j=1:N
+            y(k) = y(k)+x(j).*exp(-1i*2*pi*k*m*j.^2/2 );
         end
     end
 end

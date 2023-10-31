@@ -3,7 +3,7 @@ clear all
 close all
 
 tic
-
+return
 %% ================================= Переменные
 % коэффициенты
 SF = 7;        % коэффициент расширения спектра (от 7 до 12)
@@ -12,7 +12,7 @@ rc = (SF-rc_size);
 Base_rc = 2^rc;
 rc_factor = 2^SF/Base_rc;
 bits2sym = rc;
-BW = 30e6;
+BW = 2;
 snr = [-16:1:0];
 nIter = 10;
 
@@ -22,7 +22,7 @@ downch = LORA.downch;
 
 num_pre = 8;
 
-num_sym = 100;
+num_sym = 1000;
 nbits = num_sym*bits2sym; 
 data = randi([0 1],1, nbits); 
 
@@ -90,6 +90,7 @@ title('SNR');
 
 % return
 % 
-save('lora_crcrs_ber.mat','BER')
+% save('lora_crcrs_ber.mat','BER')
+% save('lora_rs_ber2.mat','BER')
 % save('snr_crc.mat','snr')
 

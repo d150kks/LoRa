@@ -6,8 +6,9 @@ close all
 %% ================================= CRC Type
 lora_ber = load("lora_ber.mat").BER;
 lora_crc_ber = load("lora_crc_ber.mat").BER;
-lora_rs_ber = load('lora_rs_ber.mat').BER;
-lora_crcrs_ber = load('lora_rs_ber.mat').BER;
+% lora_rs_ber = load('lora_rs_ber.mat').BER;
+lora_rs_ber = load('lora_rs_ber2.mat').BER;
+lora_crcrs_ber = load('lora_crcrs_ber.mat').BER;
 snr = load("snr_crc.mat").snr;
 
 

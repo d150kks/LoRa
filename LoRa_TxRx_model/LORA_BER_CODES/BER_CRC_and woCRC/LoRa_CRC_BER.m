@@ -2,7 +2,7 @@ clc
 clear all
 close all
 
-return
+% return
 tic
 
 %% ================================= Переменные
@@ -20,9 +20,9 @@ downch = LORA.downch;
 num_pre = 8;
 
 % num_sym = 10;
-% nbits = 1200; 
-% data = randi([0 1],1, nbits); 
-data = [0 0 1];
+nbits = 1200; 
+data = randi([0 1],1, nbits); 
+% data = [0 0 1];
 
 %% ================================= Rate matching
 [dataRM, numcodebitsRM, num_sym, zeros2end, flagRM] = LORA.RM(data);
@@ -49,7 +49,7 @@ H11 = fft(h11);
 mod_chirp = ifft( fft(mod_chirp).*H11 );
 
 fps = BW/Base;
-freq_shift = fps*2.5; %%%%%%%%%%%%%%%%%%%%%%%%
+freq_shift = fps*0.5; %%%%%%%%%%%%%%%%%%%%%%%%
 dphi=freq_shift*2*pi*(1/BW);% сдвиг
 
 % вводим частотный сдвиг
@@ -58,7 +58,7 @@ for j=1:length(mod_chirp)
 end
 
 
-snr = 10;
+% snr = 10;
 for n = 1:length(snr)
     n 
 
@@ -130,10 +130,10 @@ for n = 1:length(snr)
     %                 peakMakcor = sort_amp(k);
 
 
-        fourier = abs(fft(rxSig.*downch));
-        figure(1)
-        plot(fourier)
-        return
+%         fourier = abs(fft(rxSig.*downch));
+%         figure(1)
+%         plot(fourier)
+%         return
                     if(check_crc==0)
                         break
                     else
