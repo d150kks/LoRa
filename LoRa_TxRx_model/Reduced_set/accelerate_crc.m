@@ -27,9 +27,11 @@ num_pre = 8;
 num_sym = Base_rc;
 % nbits = b2s*num_sym; 
 % data = randi([0 1],1, nbits); 
-datade = 0:Base_rc-1;
-data = int2bit(datade.', rc).';
-% data = randi([0 1],1, Base_rc*rc); 
+
+% datade = 0:Base_rc-1;
+% data = int2bit(datade.', rc).';
+
+data = randi([0 1],1, Base_rc*rc); 
 
 %% ================================= CRC-RS LUT
 rs_peaks_lut = (0:Base_rc-1);
@@ -55,7 +57,9 @@ mod_chirp = zeros(1, num_sym*Base);           % чирпы
 for i = 1:num_sym
     code_word = bit2int(data(rc*i-rc+1:rc*i).', rc);      % значение кодового слова
 
-    code_word_rs = (rs_peaks_lut(code_word==rs_gray_lut))*rc_factor;
+%     code_word_rs = (rs_peaks_lut(code_word==rs_gray_lut))*rc_factor;
+    code_word_rs = rs_gray_lut(code_word+1)*rc_factor;
+
     check_data(i) = code_word_rs;
     code_word_data(i) = code_word;
 
@@ -65,8 +69,10 @@ for i = 1:num_sym
     mod_chirp(i*Base-Base+1:Base*i) = [chirp1, chirp2];
 
 end 
+
+
 % check_data
-[mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data, num_sym);
+% [mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data, num_sym);
 % mod_chirp = circshift(mod_chirp, 8);
 check_data
 delay1 = 32;
@@ -83,12 +89,18 @@ for i=1:num_sym
     fourier(i,:) = abs(fft(mod_chirp(Base*i-Base+1:Base*i).*downch)); 
     fourier_rs = abs(filtfilt( d/8, 1, fourier(i,:).*1 ));
     fourier_rs = 128*fourier_rs./max(fourier_rs);
-    fourier_rs2 = LORA.reduced_set_fourier( fourier_rs );
+    fourier_rs2 = LORA.reduced_set_fourier( fourier(i,:) );
 
 %     fourier_rs = LORA.reduced_set_fourier(fourier(i,:));
     [~, indexMax] = max( fourier_rs2 ); % находим щелчок  частоты в чирпе
     sv(i) = LORA.grayCode(indexMax);
     sv_rs(i) = sv(i)*rc_factor;
+
+
+    fprintf('peredal: %d\n', code_word_data(1))
+    fprintf('prinyal: %d\n', rs_peaks_lut(LORA.grayCode==(indexMax-1)) )
+    check_data(1)
+    return
 
 end
 % [sv_rs, sv, fourier] = LORA.delorax_modified( mod_chirp, num_sym);

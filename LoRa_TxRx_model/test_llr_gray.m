@@ -9,9 +9,11 @@ close all
 SF = 8;        % коэффициент расширения спектра (от 7 до 12)
 BW = 125e3;
 
-LORA = myLoRaClass(SF,BW);
+% LORA = myLoRaClass(SF,BW);
+LORA = myLoRaClass_test(SF,BW);
 Base = LORA.Base;
 downch = LORA.downch;
+grayCode = LORA.grayCode;
 
 % массивы данных
 numinfobits = 486;
@@ -46,12 +48,6 @@ G = LORA.grayCode;
 % num_sym = Base;
 [mod_chirp, check_data] = LORA.lorax_modified( codeword, num_sym, 1);
 
-% datanogray = de2bi(check_data_no_gray);
-% datagray = de2bi(check_data);
-% k = find(data==16)
-% 
-
-% return
 
 %% ================================= АБГШ 
 snr = -0;
@@ -94,7 +90,12 @@ for i = 1:num_sym
     [peakMak, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
 
     % вычисляем значение кодового слова исходя из базы сигнала
-    sv(i) = indexMax-1;
+    % ~~~~~~~~ Hard Decisions ~~~~~~~~
+    [peak_notcor, peak_cor, peakMakcor, dbits] = LORA.HARD_CRC_DEMOD(fourier);
+    sv(i) = peak_notcor;
+    sv_cor(i) = peak_cor;
+    hard_bits(SF*i-SF+1:SF*i) = dbits;
+%     sv(i) = indexMax-1;
 
     % LLR
 
@@ -104,7 +105,7 @@ for i = 1:num_sym
           m1 = M1(:,nBit);
           m1(m1==0)=[];
 %           LLR = -(1/nvar)*(min( (peakMak-fourier(m0)).^2 ) - min( (peakMak-fourier(m1)).^2 ));
-            LLR = -(1/nvar)*(min( (peakMak-fourier( LORA.grayCode(m0)+1 )).^2 ) - min( (peakMak-fourier( LORA.grayCode(m1)+1 )).^2 ));
+            LLR = -(1/nvar)*(min( (peakMak-fourier( grayCode(m0)+1 )).^2 ) - min( (peakMak-fourier( grayCode(m1)+1 )).^2 ));
           L = [L LLR];
         end
 
@@ -138,6 +139,7 @@ figure(1)
 plot(-normalize(L))
 hold on 
 plot(normalize(data))
+xlim([1 100])
 
 %%%%%%
 % scatterplot(mod_sig)

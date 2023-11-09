@@ -3,7 +3,7 @@ clear all
 close all
 
 tic
-return
+% return
 %% ================================= Переменные
 % коэффициенты
 SF = 7;        % коэффициент расширения спектра (от 7 до 12)
@@ -64,7 +64,7 @@ for n = 1:length(snr)
         rxSig = awgn(mod_chirp,snr(n),'measured');
 
         % демодуляция
-        [hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( rxSig, num_sym);
+        [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( rxSig, num_sym);
 
         % подсчет БЕР с учетом задержки
         err = sum(hard_bits~=data);

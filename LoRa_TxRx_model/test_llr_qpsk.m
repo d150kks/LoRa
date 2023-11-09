@@ -48,7 +48,7 @@ for b=1:numinfobits/2
 %     LLR1 =  -(min( (x-sx01).^2+(y-sy01).^2 ) - min( (x-sx11).^2+(y-sy11).^2 ));
 %     LLR2 =  -(min( (x-sx02).^2+(y-sy02).^2 ) - min( (x-sx12).^2+(y-sy12).^2 ));
       LLR = -(min( (x-sx0(i,:)).^2+(y-sy0(i,:)).^2 ) - min( (x-sx1(i,:)).^2+(y-sy1(i,:)).^2 ));
-      return
+%       return
       L = [L LLR];
     end
     
