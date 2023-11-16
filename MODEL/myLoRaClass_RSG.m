@@ -126,13 +126,12 @@ classdef myLoRaClass_RSG
             
             % Модуляция
             for i = 1:num_sym
-                code_word = bit2int(data(obj.RS*i-obj.RS+1:obj.RS*i).', obj.bits2sym);      % значение кодового слова
+                code_word = bi2de(data(obj.SF*i-obj.SF+1:obj.SF*i));      % значение кодового слова
                 if(gray==1)
-                    code_word_gray = obj.grayCode(code_word+1)*obj.rs_factor;
+                    code_word_gray = obj.grayCode_nonrs(code_word+1);
                 else
-                    code_word_gray = code_word*obj.rs_factor;
+                    code_word_gray = code_word;
                 end
-
                 check_data(i)    = code_word_gray; % значение закодированного символа
                 check_no_gray(i) = code_word;
                 cs = single((code_word_gray/obj.Base)*obj.Ts/obj.ts);             % место сдвига
@@ -178,9 +177,7 @@ classdef myLoRaClass_RSG
             fourier_rs = zeros(1, obj.Base_rs);
             for rs_peak_idx=1:obj.Base_rs
                 rs_win = obj.CYC_SHIFT(obj.rs_peaks(rs_peak_idx)+obj.rs_aos);
-%                 fourier_rs(rs_peak_idx) = max(fourier(rs_win) );
-                fourier_rs(rs_peak_idx) = mean( fourier(rs_win).*obj.fir_win );
-%                 fourier_rs(rs_peak_idx) = sum(fourier(rs_win))/sqrt(obj.rs_factor);
+                fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*obj.fir_win) );
             end
 
         end
@@ -194,9 +191,8 @@ classdef myLoRaClass_RSG
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 
                 fourier = abs(fft(d));            % переводим результат в область частот
-                fourier = obj.reduced_set_fourier(fourier);
                 [~, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
-                [~, indexMaxGray] = max( fourier(obj.grayCode+1) ); % находим щелчок  частоты в чирпе
+                [~, indexMaxGray] = max( fourier(obj.grayCode_nonrs+1) ); % находим щелчок  частоты в чирпе
     
                 % вычисляем значение кодового слова исходя из базы сигнала
                 sv(i) = indexMax-1;

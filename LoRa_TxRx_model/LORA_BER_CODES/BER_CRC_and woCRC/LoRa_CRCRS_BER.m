@@ -52,7 +52,7 @@ for j=1:length(mod_chirp)
     mod_chirp(j)=mod_chirp(j)*exp(1i*dphi*j);
 end
 
-% snr = 10;
+snr = -15;
 for n = 1:length(snr)
     n 
 
@@ -66,9 +66,21 @@ for n = 1:length(snr)
         % демодуляция
         [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( rxSig, num_sym);
 
+        fourierg = fft(ifft(fourier).*(repmat(gausswin(16).', 1, 8)+circshift(repmat(gausswin(16).', 1, 8),8) ));
+        for j=1:7
+%             fw(j*16-16+1:j*16) = 
+            fw = abs(corrcoef(fourier(j*16-16+1:j*16), fourier((j+1)*16-16+1:(j+1)*16)))
+        end
+
+
+        figure(1); hold on
+        stem(abs(fourier))
+        stem(abs(fourierg).*max(abs(fourier))./max(abs(fourierg)), 'rx')
+%         max(fourier_rs)
+        return
         % подсчет БЕР с учетом задержки
         err = sum(hard_bits~=data);
-%         return
+
         % Increment the error and bit counters
         numErr = numErr + err;        
         NumData = NumData + nbits;
