@@ -10,7 +10,7 @@ rc_size = 4;
 rc = (SF-rc_size);
 BW = 2e6;
 snr = [-16:1:0];
-nIter = 10;
+nIter = 20;
 
 LORA = myLoRaClass_RSG(SF,BW);
 Base = LORA.Base;
@@ -35,9 +35,17 @@ numcodebits = cfgLDPCEnc.BlockLength;
 data = randi([0 1],1, numinfobits); 
 data_ldpc = ldpcEncode(data.', cfgLDPCEnc).';
 data_ldpc_intrlv = randintrlv(data_ldpc, intrlv_state);
-num_sym = length(data_ldpc_intrlv)/rc;
+
+if(1)
+    num_sym = length(data_ldpc_intrlv)/rc;
+else
+    num_sym = ceil(length(data_ldpc_intrlv)/SF);
+    bits2add = SF-mod(length(data_ldpc_intrlv), SF);
+    data_ldpc_intrlv = [data_ldpc_intrlv, zeros(1, bits2add)];
+end
 
 %% ================================= Mодуляция
+% [mod_chirp, check_data, check_no_gray] = LORA.lorax_modified(data_ldpc_intrlv, num_sym, 1);
 [mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data_ldpc_intrlv, num_sym);
 tx_preamble = repmat(chirp,1,num_pre);
 tx_downch = repmat(downch,1,num_pre);
@@ -55,8 +63,8 @@ h11(2) = 0.5;
 h11(5) = 0.3;
 H11 = fft(h11);
 
-% tx_chirp_h = ifft( fft(tx_chirp).*H11 );
-tx_chirp_h = tx_chirp;
+tx_chirp_h = ifft( fft(tx_chirp).*H11 );
+% tx_chirp_h = tx_chirp;
 
 % вводим частотный сдвиг
 fps = BW/Base;
@@ -72,7 +80,7 @@ delay = randi(50);
 tx_chirp_hft = [zeros(1,delay), tx_chirp_hf, zeros(1, tx_length)];
 
 tic
-% snr = -10;
+% snr = 10;
 for n = 1:length(snr)
     fprintf('Iter: %d\n', n) 
 
@@ -88,14 +96,20 @@ for n = 1:length(snr)
         rxSig_corr = rxSig_corr(Base*2+1:end);
 
         % Freq Sync
+%         rx_preamble = rxSig_corr(num_pre*Base+1:num_pre*2*Base);
+%         corrected_signal = rxSig_corr(num_pre*2*Base+1:end);
         [freq_data, corrected_signal, rx_preamble] = LORA.LORA_FREQ_ESTIM_v3(rxSig_corr, num_pre);
 
         % Demodulation
+%         [soft_bits, hard_bits, sv_decode, sv, fourier] = LORA.delorax_modified( corrected_signal, num_sym, tx_preamble, rx_preamble);
         [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( corrected_signal, num_sym, tx_preamble, rx_preamble);
+%         hard_bits = hard_bits(1:end-bits2add);
+%         soft_bits = soft_bits(1:end-bits2add);
+
 
         % LDPC decoding
-        maxnumiter = 100;
-        rx_data_ldpc = randdeintrlv((soft_bits), intrlv_state);
+        maxnumiter = 10;
+        rx_data_ldpc = randdeintrlv(soft_bits, intrlv_state);
         data_decode = ldpcDecode(rx_data_ldpc.', cfgLDPCDec, maxnumiter).';
 
         % подсчет БЕР с учетом задержки

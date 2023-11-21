@@ -21,9 +21,16 @@ num_pre = 4;
 
 num_sym = 1000;
 numinfobits = num_sym*rc; 
+% numinfobits = num_sym*SF; 
 data = randi([0 1],1, numinfobits); 
 
-return
+
+
+
+
+% m0 = LORA.M0
+% 
+% return
 %% ================================= Mодуляция
 [mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data, num_sym);
 % [mod_chirp, check_data, check_no_gray] = LORA.lorax_modified(data, num_sym, 1);
@@ -32,7 +39,7 @@ tx_preamble = repmat(chirp, 1, num_pre);
 %% ================================= BER
 % return
 tic
-% snr = 0;
+% snr = 10;
 for n = 1:length(snr)
     fprintf('Iter: %d\n', n) 
 
@@ -45,16 +52,15 @@ for n = 1:length(snr)
         rx_preamble = awgn(tx_preamble,snr(n),'measured');
 
         % демодуляция
-%         [sv_decode, sv, fourier] = LORA.delorax_modified(rxSig, num_sym);
-%         hard_bits = de2bi(sv_decode, SF).';
-%         hard_bits = hard_bits(:).';
+%         [soft_bits, hard_bits, sv_decode, sv, fourier] = LORA.delorax_modified( rxSig, num_sym, tx_preamble, rx_preamble);
         [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( rxSig, num_sym, tx_preamble, rx_preamble);
 
 
 %         figure(1)
-%         plot(abs(fourier))
+%         plot(normalize(hard_bits))
 %         hold on
-%         plot(abs(fourier_rs))
+%         plot(-normalize(soft_bits))
+%         xlim([1 100])
 %         return
 
         % подсчет БЕР с учетом задержки
@@ -81,4 +87,4 @@ title('SNR');
 
 
 % save('lora_ber.mat','BER')
-save('lora_rsg_ber.mat','BER')
+% save('lora_rsg_ber.mat','BER')

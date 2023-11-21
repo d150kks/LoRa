@@ -28,6 +28,7 @@ classdef myLoRaClass_RSG
 
         % Gray code
         grayCode;   % Gray Code
+        grayCode_nonrs; 
 
         % CRC
         crclen = 4; % length of crc code
@@ -71,6 +72,11 @@ classdef myLoRaClass_RSG
                 obj.grayCode(i+1) = bitxor(i, bitshift(i, -1));
             end
 
+            obj.grayCode_nonrs = zeros(1, obj.Base);
+            for i = 0:obj.Base-1
+                obj.grayCode_nonrs(i+1) = bitxor(i, bitshift(i, -1));
+            end
+
             % ~~~~~~~~ CRC code ~~~~~~~~
 %             obj.bits2sym = obj.SF-obj.crclen;
             obj.bits2sym = obj.RS;
@@ -85,13 +91,13 @@ classdef myLoRaClass_RSG
             obj.downch = exp(-1i * (2*pi*(0 + (obj.m*obj.t.^2)/2)) );
 
             % ~~~~~~~~ LLR Map ~~~~~~~~
-            % FOR CRC
-            bitmap = de2bi(0:obj.Base-1);
+            % FOR LORA
+            bitmap_nonrs = int2bit( (0:obj.Base-1), obj.SF).';
             obj.M0 = zeros(obj.Base, obj.SF);
             obj.M1 = zeros(obj.Base, obj.SF);
             for nBit=1:obj.SF
                 for nSym = 1:obj.Base
-                    if( bitmap(nSym, nBit) == 0)
+                    if( bitmap_nonrs(nSym, nBit) == 0)
                         obj.M0(nSym,nBit)= nSym;
                     else
                         obj.M1(nSym,nBit)= nSym;
@@ -126,7 +132,7 @@ classdef myLoRaClass_RSG
             
             % Модуляция
             for i = 1:num_sym
-                code_word = bi2de(data(obj.SF*i-obj.SF+1:obj.SF*i));      % значение кодового слова
+                code_word = bit2int(data(obj.SF*i-obj.SF+1:obj.SF*i).', obj.SF);      % значение кодового слова
                 if(gray==1)
                     code_word_gray = obj.grayCode_nonrs(code_word+1);
                 else
@@ -174,29 +180,62 @@ classdef myLoRaClass_RSG
         function [fourier_rs] = reduced_set_fourier(obj, fourier)
 
             % Reduced set vectors and aos
+%             new_win = gausswin(obj.rs_factor+1, 1/sqrt(nvar)).';
             fourier_rs = zeros(1, obj.Base_rs);
             for rs_peak_idx=1:obj.Base_rs
                 rs_win = obj.CYC_SHIFT(obj.rs_peaks(rs_peak_idx)+obj.rs_aos);
+%                 fourier_rs(rs_peak_idx) = max( (fourier(rs_win).*obj.fir_win) );
+%                 fourier_rs(rs_peak_idx) = mean( fourier(rs_win).*obj.fir_win );
                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*obj.fir_win) );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*new_win) );
             end
 
         end
 
-        function [sv_decode, sv, fourier] = delorax_modified(obj, mod_chirp, num_sym)
+        function [soft_bits, hard_bits, sv_decode, sv, fourier] = delorax_modified(obj, mod_chirp, num_sym, varargin)
 
-            % Demodulation
+            % ~~~~~~~~ Parameters ~~~~~~~~
+            if nargin >= 4
+                tx_preamble = varargin{1};
+                rx_preamble = varargin{2};
+                nvar = std( abs(normalize(tx_preamble)-((rx_preamble-mean(tx_preamble))./std(tx_preamble))).^2 );
+            else
+                nvar = 1; % 
+            end
+
+            hard_bits = zeros(1,obj.SF*num_sym);
+            soft_bits = zeros(1,obj.SF*num_sym);
             sv = zeros(1,num_sym);
             sv_decode = zeros(1,num_sym);
+
+            % ~~~~~~~~ Demodulation ~~~~~~~~
             for i = 1:num_sym
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 
                 fourier = abs(fft(d));            % переводим результат в область частот
-                [~, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
-                [~, indexMaxGray] = max( fourier(obj.grayCode_nonrs+1) ); % находим щелчок  частоты в чирпе
+                [peak_code, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
+                [peak_decode, indexMaxGray] = max( fourier(obj.grayCode_nonrs+1) ); % находим щелчок  частоты в чирпе
     
                 % вычисляем значение кодового слова исходя из базы сигнала
                 sv(i) = indexMax-1;
                 sv_decode(i) = indexMaxGray-1;
+
+                % ~~~~~~~~ Soft and Hard Decisions ~~~~~~~~
+                % Hard
+                hard_bits(obj.SF*i - obj.SF+1:obj.SF*i) = int2bit(sv_decode(i), obj.SF).';
+
+                % Soft Decisions
+                for nBit=1:obj.SF
+                    m0 = obj.M0(:, nBit);
+                    m0(m0==0)=[];
+                    m0g = obj.grayCode_nonrs(m0)+1;
+
+                    m1 = obj.M1(:, nBit);
+                    m1(m1==0)=[];
+                    m1g = obj.grayCode_nonrs(m1)+1;
+                    LLR = -(1/nvar)*(min( (peak_code-fourier(m0g)).^2 ) - min( (peak_code-fourier(m1g)).^2 ));
+                    soft_bits(i*obj.SF-obj.SF+nBit) = LLR;
+                end
             end
             
         end
@@ -223,7 +262,7 @@ classdef myLoRaClass_RSG
                 
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 fourier = abs(fft(d));            % переводим результат в область частот
-                fourier_rs = obj.reduced_set_fourier(fourier);
+                fourier_rs = (obj.reduced_set_fourier( fourier ));
 
                 [peak_RS, indexMax] = max( fourier_rs ); % находим щелчок  частоты в чирпе
                 sv(i) = obj.rs_peaks_lut(obj.grayCode==(indexMax-1));
@@ -231,7 +270,7 @@ classdef myLoRaClass_RSG
 
                 % ~~~~~~~~ Soft and Hard Decisions ~~~~~~~~
                 % Hard
-                hard_bits(obj.RS*i - obj.RS+1:obj.RS*i) = int2bit(sv(i).', obj.RS).';
+                hard_bits(obj.RS*i - obj.RS+1:obj.RS*i) = int2bit(sv(i), obj.RS).';
 
                 % Soft Decisions
                 for nBit=1:obj.RS
@@ -242,6 +281,8 @@ classdef myLoRaClass_RSG
                     m1 = obj.M1rs(:, nBit);
                     m1(m1==0)=[];
                     m1g = obj.grayCode(m1)+1;
+%                     LLR = -(1/nvar)*(min( ( sv(i)-m0g).^2 ) - min( ( sv(i)-m1g).^2 ));
+% ( peak_RS-fourier_rs(m0g)).^2
                     LLR = -(1/nvar)*(min( ( peak_RS-fourier_rs(m0g)).^2 ) - min( ( peak_RS-fourier_rs(m1g)).^2 ));
                     soft_bits(i*obj.RS-obj.RS+nBit) = LLR;
                 end
