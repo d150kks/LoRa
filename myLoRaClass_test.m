@@ -461,8 +461,6 @@ classdef myLoRaClass_test
 
             % ~~~~~~~~ 0. Coarse CFO and STO estimation ~~~~~~~~ 
             [STOint, STOfraq, CFO, CFOdphi] = obj.fraq2( rx_preamb, rx_downch, num_pre);
-%             STOint, STOfraq, CFO, CFOdphi
-            STO = STOint+STOfraq;
 
             % ~~~~~~~~ 00. Coarse CFO and STO compensation ~~~~~~~~ 
             % ~~~~~~~~ 01. STO compensation ~~~~~~~~ 
@@ -488,10 +486,10 @@ classdef myLoRaClass_test
             Yaos = -2:2;
             argumon = zeros(1, num_pre-1);
             for i = 1:num_pre-1
-                Y1 = fft(rx_preamb2(i*N+1:N*i+N).*obj.downch);
-                Y0 = fft(rx_preamb2(i*N-N+1:N*i).*obj.downch);
-                [~, indmax1] = max(Y1);
-                [~, indmax0] = max(Y0);
+                Y1 = fft([rx_preamb2(i*N+1:N*i+N).*obj.downch, zeros(1,N*(8-1))]);
+                Y0 = fft([rx_preamb2(i*N-N+1:N*i).*obj.downch, zeros(1,N*(8-1))]);
+                [~, indmax1] = max(abs(Y1));
+                [~, indmax0] = max(abs(Y0));
                 indwin1 = obj.CYC_SHIFT(indmax1+Yaos);
                 indwin0 = obj.CYC_SHIFT(indmax0+Yaos);
             

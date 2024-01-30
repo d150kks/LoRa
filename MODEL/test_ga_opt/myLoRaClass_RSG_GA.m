@@ -1,7 +1,10 @@
-classdef myLoRaClass_new
+classdef myLoRaClass_RSG_GA
    
     properties
         % коэффициенты
+        PARAM_ALPHA;
+%         PARAM_WINSIZE;
+%         PARAM_NVAR_LIMIT;
         SF;         % Коэффициент расширения спектра (от 7 до 12)
         Base;       % База сигнала
         BW;         % Signal Bandwidth
@@ -28,6 +31,7 @@ classdef myLoRaClass_new
 
         % Gray code
         grayCode;   % Gray Code
+        grayCode_nonrs; 
 
         % CRC
         crclen = 4; % length of crc code
@@ -38,22 +42,26 @@ classdef myLoRaClass_new
         %
         M0;         % matrix with peak-to-bitvalue==0
         M1;         % matrix with peak-to-bitvalue==1
+        M0rs;
+        M1rs;
     end
 
     methods
         %% Constructor
-        function obj = myLoRaClass_true(SF, BW)
+        function obj = myLoRaClass_RSG_GA(SF, BW, PARAM_ALPHA)
 
             % ~~~~~~~~ Chirp parameters ~~~~~~~~
             obj.SF = SF; 
-            obj.Base = 2^SF;
+            obj.PARAM_ALPHA = PARAM_ALPHA;
+%             obj.PARAM_WINSIZE = PARAM_WINSIZE;
+%             obj.PARAM_NVAR_LIMIT = PARAM_NVAR_LIMIT;
+
+            obj.Base = 2^SF; 
             obj.BW = BW; 
             obj.Ts = (2^SF)/BW;
             obj.ts = 1/(BW);              % время дискретизации
             obj.m = BW/obj.Ts;              % коэффициент измнения частоты
             obj.t = 0:obj.ts:obj.Ts-obj.ts;         % полоса времени ОДНОГО чирпа
-
-
 
             % ~~~~~~~~ Reduced set parameters ~~~~~~~~
             obj.rs_size = 4;
@@ -62,13 +70,20 @@ classdef myLoRaClass_new
             obj.rs_factor = obj.Base/obj.Base_rs;
             obj.rs_peaks = (0:obj.Base_rs-1)*obj.rs_factor+1;
             obj.rs_aos = -obj.rs_factor/2:obj.rs_factor/2;
-            obj.fir_win = gausswin(obj.rs_factor+1).';
+%             obj.fir_win = 1;
+%             obj.fir_win = gausswin(obj.rs_factor+1, obj.PARAM_ALPHA).';
+            obj.fir_win = tukeywin(obj.rs_factor+1, obj.PARAM_ALPHA).';
 
             % ~~~~~~~~ Gray code ~~~~~~~~
 %             obj.Base_rs = obj.Base; %%%%%%%%%%%%%%%%%%%%%
             obj.grayCode = zeros(1, obj.Base_rs);
             for i = 0:obj.Base_rs-1
                 obj.grayCode(i+1) = bitxor(i, bitshift(i, -1));
+            end
+
+            obj.grayCode_nonrs = zeros(1, obj.Base);
+            for i = 0:obj.Base-1
+                obj.grayCode_nonrs(i+1) = bitxor(i, bitshift(i, -1));
             end
 
             % ~~~~~~~~ CRC code ~~~~~~~~
@@ -85,71 +100,36 @@ classdef myLoRaClass_new
             obj.downch = exp(-1i * (2*pi*(0 + (obj.m*obj.t.^2)/2)) );
 
             % ~~~~~~~~ LLR Map ~~~~~~~~
-            bitmap = de2bi(0:obj.Base-1);
+            % FOR LORA
+            bitmap_nonrs = int2bit( (0:obj.Base-1), obj.SF).';
             obj.M0 = zeros(obj.Base, obj.SF);
             obj.M1 = zeros(obj.Base, obj.SF);
             for nBit=1:obj.SF
                 for nSym = 1:obj.Base
-                    if( bitmap(nSym, nBit) == 0)
+                    if( bitmap_nonrs(nSym, nBit) == 0)
                         obj.M0(nSym,nBit)= nSym;
                     else
                         obj.M1(nSym,nBit)= nSym;
                     end
                 end
             end
+
+            % FOR RS
+            bitmap = int2bit( (0:obj.Base_rs-1), obj.RS).';
+            obj.M0rs = zeros(obj.Base_rs, obj.RS);
+            obj.M1rs = zeros(obj.Base_rs, obj.RS);
+            for nBit=1:obj.RS
+                for nSym = 1:obj.Base_rs
+                    if( bitmap(nSym, nBit) == 0)
+                        obj.M0rs(nSym,nBit)= nSym;
+                    else
+                        obj.M1rs(nSym,nBit)= nSym;
+                    end
+                end
+            end
             
         end
 
-
-        %% ================================= Rate matching
-        function [dataRM, numbitsRM, num_symRM, zeros2end, flagRM] = RM(obj, data)
-            numbits = length(data);
-            num_sym = numbits/obj.bits2sym;
-            bits2end = mod( numbits, obj.bits2sym);
-            zeros2end = obj.bits2sym-bits2end;
-
-            if( bits2end~=0 )
-                numbitsRM = numbits+zeros2end;
-                dataRM = [data, zeros(1,zeros2end)];
-                num_symRM = numbitsRM/obj.bits2sym;
-                flagRM = 1;
-            else
-                flagRM = 0;
-                numbitsRM = numbits;
-                dataRM = data;
-                num_symRM = num_sym;
-            end
-        end
-
-
-        %% ================================= CRC coding
-        % ------------------------- CRC Coding -------------------------
-        function [data_code] = codeCRC(obj, data, num_sym)
-
-            % CRC coding
-            data_code = zeros(1, num_sym*obj.SF);
-            for i=1:num_sym
-                data_win = data(i*obj.bits2sym-obj.bits2sym+1:i*obj.bits2sym);
-                CRC_Bits = obj.CRC4(data_win.').';
-                data_code(i*obj.SF-obj.SF+1:i*obj.SF) = [data_win, CRC_Bits].';
-            end
-
-        end
-
-        %% ================================= CRC decoding
-        % ------------------------- CRC Decoding -------------------------
-        function [data_decode] = decodeCRC(obj, data, num_sym, zeros2end, flagRM)
-
-            data_decode = zeros(1, num_sym*obj.bits2sym);
-            for i=1:num_sym
-                data_win = data(i*obj.SF-obj.SF+1:i*obj.SF);
-                data_decode(i*obj.bits2sym-obj.bits2sym+1:i*obj.bits2sym) = data_win(1:obj.bits2sym);
-            end
-            if(flagRM==1)
-                data_decode = data_decode(1:end-zeros2end);
-            end
-
-        end
 
         %% ================================= lorax_modified
         function [mod_chirp, check_data, check_no_gray] = lorax_modified(obj, data, num_sym, gray)
@@ -161,13 +141,12 @@ classdef myLoRaClass_new
             
             % Модуляция
             for i = 1:num_sym
-                code_word = bit2int(data(obj.RS*i-obj.RS+1:obj.RS*i).', obj.bits2sym);      % значение кодового слова
+                code_word = bit2int(data(obj.SF*i-obj.SF+1:obj.SF*i).', obj.SF);      % значение кодового слова
                 if(gray==1)
-                    code_word_gray = obj.grayCode(code_word+1)*obj.rs_factor;
+                    code_word_gray = obj.grayCode_nonrs(code_word+1);
                 else
-                    code_word_gray = code_word*obj.rs_factor;
+                    code_word_gray = code_word;
                 end
-
                 check_data(i)    = code_word_gray; % значение закодированного символа
                 check_no_gray(i) = code_word;
                 cs = single((code_word_gray/obj.Base)*obj.Ts/obj.ts);             % место сдвига
@@ -191,7 +170,8 @@ classdef myLoRaClass_new
             for i = 1:num_sym
 
                 code_word = bit2int(data(obj.RS*i-obj.RS+1:obj.RS*i).', obj.RS);      % значение кодового слова
-                code_word_rs = obj.rs_peaks_lut(obj.rs_gray_lut==code_word)*obj.rs_factor; 
+%                 code_word_rs = obj.rs_peaks_lut(obj.rs_gray_lut==code_word)*obj.rs_factor; 
+                code_word_rs = obj.rs_gray_lut(code_word+1)*obj.rs_factor;
                 check_data(i) = code_word_rs;                     
                 check_no_gray(i) = code_word;
 
@@ -205,234 +185,136 @@ classdef myLoRaClass_new
         end
 
         %% ================================= delorax_modified
-
         % Transform Fourier to RS fourier
-        function [fourier_rs] = reduced_set_fourier(obj, fourier)
+        function [fourier_rs] = reduced_set_fourier(obj, fourier, var)
+
+
+            %%%%%%%%%%%%%%%%%%%% TEST
+%             new_win = ones(1,obj.rs_factor+1).*obj.fir_win(1);
+%             var_log = 10*log10(var);
+%             var_decision = floor(var_log*obj.PARAM_WINSIZE/obj.PARAM_NVAR_LIMIT);
+% 
+%             if(var_decision>obj.PARAM_WINSIZE)
+%                 var_decision=obj.PARAM_WINSIZE;
+%             elseif(var_decision<0)
+%                 var_decision=1;
+%             end
+%             new_win(var_decision:17-var_decision+1) = obj.fir_win(var_decision:17-var_decision+1);
+            %%%%%%%%%%%%%%%%%%%%
 
             % Reduced set vectors and aos
+%             new_win = gausswin(obj.rs_factor+1, 1/sqrt(nvar)).';
             fourier_rs = zeros(1, obj.Base_rs);
             for rs_peak_idx=1:obj.Base_rs
                 rs_win = obj.CYC_SHIFT(obj.rs_peaks(rs_peak_idx)+obj.rs_aos);
-%                 fourier_rs(rs_peak_idx) = max(fourier(rs_win) );
-                fourier_rs(rs_peak_idx) = mean(fourier(rs_win).*obj.fir_win );
-%                 fourier_rs(rs_peak_idx) = sum(fourier(rs_win))/sqrt(obj.rs_factor);
+%                 fourier_rs(rs_peak_idx) = max( (fourier(rs_win).*obj.fir_win) );
+%                 fourier_rs(rs_peak_idx) = mean( fourier(rs_win).*obj.fir_win );
+%                 fourier_rs(rs_peak_idx) = ( prod((fourier(rs_win).*obj.fir_win)).^1/(obj.rs_factor+1) );
+                fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*obj.fir_win) );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*flip(fourier(rs_win))).*obj.fir_win );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*new_win) );
             end
 
         end
 
+        function [soft_bits, hard_bits, sv_decode, sv, fourier] = delorax_modified(obj, mod_chirp, num_sym, varargin)
 
-        function [sv_decode, sv, fourier] = delorax_modified(obj, mod_chirp, num_sym)
+            % ~~~~~~~~ Parameters ~~~~~~~~
+            if nargin >= 4
+                tx_preamble = varargin{1};
+                rx_preamble = varargin{2};
+                nvar = std( abs(normalize(tx_preamble)-((rx_preamble-mean(tx_preamble))./std(tx_preamble))).^2 );
+            else
+                nvar = 1; % 
+            end
 
-            % Demodulation
+            hard_bits = zeros(1,obj.SF*num_sym);
+            soft_bits = zeros(1,obj.SF*num_sym);
             sv = zeros(1,num_sym);
             sv_decode = zeros(1,num_sym);
+
+            % ~~~~~~~~ Demodulation ~~~~~~~~
             for i = 1:num_sym
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 
                 fourier = abs(fft(d));            % переводим результат в область частот
-                fourier = obj.reduced_set_fourier(fourier);
-                [~, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
-                [~, indexMaxGray] = max( fourier(obj.grayCode+1) ); % находим щелчок  частоты в чирпе
+                [peak_code, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
+                [peak_decode, indexMaxGray] = max( fourier(obj.grayCode_nonrs+1) ); % находим щелчок  частоты в чирпе
     
                 % вычисляем значение кодового слова исходя из базы сигнала
                 sv(i) = indexMax-1;
                 sv_decode(i) = indexMaxGray-1;
+
+                % ~~~~~~~~ Soft and Hard Decisions ~~~~~~~~
+                % Hard
+                hard_bits(obj.SF*i - obj.SF+1:obj.SF*i) = int2bit(sv_decode(i), obj.SF).';
+
+                % Soft Decisions
+                for nBit=1:obj.SF
+                    m0 = obj.M0(:, nBit);
+                    m0(m0==0)=[];
+                    m0g = obj.grayCode_nonrs(m0)+1;
+
+                    m1 = obj.M1(:, nBit);
+                    m1(m1==0)=[];
+                    m1g = obj.grayCode_nonrs(m1)+1;
+                    LLR = -(1/nvar)*(min( (peak_code-fourier(m0g)).^2 ) - min( (peak_code-fourier(m1g)).^2 ));
+                    soft_bits(i*obj.SF-obj.SF+nBit) = LLR;
+                end
             end
             
         end
 
-        function [hard_bits, sv_rs, sv, fourier, fourier_rs] = delorax_crcrs(obj, mod_chirp, num_sym)
+        function [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = delorax_crcrs(obj, mod_chirp, num_sym, varargin)
 
-            % Demodulation
-            deriv = repmat([1, -1], 1, obj.Base/2);
-%             hard_bits = zeros(1,obj.SF*num_sym);
+            % ~~~~~~~~ Parameters ~~~~~~~~
+            if nargin >= 4
+                tx_preamble = varargin{1};
+                rx_preamble = varargin{2};
+                nvar = std( abs(normalize(tx_preamble)-((rx_preamble-mean(tx_preamble))./std(tx_preamble))).^2 );
+            else
+                nvar = 1; % 
+            end
+
+%             deriv = repmat([1, -1], 1, obj.Base/2);
+            hard_bits = zeros(1,obj.RS*num_sym);
+            soft_bits = zeros(1,obj.RS*num_sym);
             sv = zeros(1,num_sym);
             sv_rs = zeros(1,num_sym);
 
             % Demodulation
             for i=1:num_sym
+                
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
-                fourier = abs(fft(d));            % переводим результат в область частот
-%                 fourier_rs = filtfilt( ones(1,obj.rs_factor)/(obj.rs_factor/2), 1, fourier.*1 );
-                fourier_rs = obj.reduced_set_fourier(fourier);
+                fourier = abs(fft(d));            % переводим результат в область частот %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                fourier_rs = (obj.reduced_set_fourier( fourier, nvar )); %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-                [~, indexMax] = max( fourier_rs ); % находим щелчок  частоты в чирпе
-                sv(i) = obj.grayCode(indexMax);
+                [peak_RS, indexMax] = max( fourier_rs ); % находим щелчок  частоты в чирпе
+                sv(i) = obj.rs_peaks_lut(obj.grayCode==(indexMax-1));
                 sv_rs(i) = sv(i)*obj.rs_factor;
-            end
 
-            hard_bits = int2bit(sv.', obj.RS).';
+                % ~~~~~~~~ Soft and Hard Decisions ~~~~~~~~
+                % Hard
+                hard_bits(obj.RS*i - obj.RS+1:obj.RS*i) = int2bit(sv(i), obj.RS).';
 
-        end
-
-        %% ================================= DELORAX_CRC
-        function [sv, sv_cor, peakMakcor, dbits] = HARD_CRC_DEMOD(obj, fourier)
-
-            % ~~~~~~~~ Initial conditions ~~~~~~~~
-            % Base_rs ~ Base
-            check_crc = 1;
-
-            % ~~~~~~~~ CRC Demodulation ~~~~~~~~
-            while check_crc~=0
-            
-                % Circular shift in peak search
-                [~, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
-                sv = indexMax;
-                peak_win = indexMax+obj.aos_win;
-                for pk=1:length(peak_win)
-                    if(peak_win(pk)<=0)
-                        peak_win(pk)=peak_win(pk)+obj.Base;
-                    end
-                    if(peak_win(pk)>obj.Base)
-                        peak_win(pk)=peak_win(pk)-obj.Base;
-                    end
-                end
-
-                % Set type of the peak sort
-                peaks_amp = fourier(peak_win);
-                peak_sort = zeros(1,2*obj.aos+1);
-                peak_sort(1) = indexMax;
-                for pk=1:obj.aos
-                    if( peaks_amp(obj.aos+1+pk)>peaks_amp(obj.aos+1-pk) )
-                        peak_sort(2*pk)       = peak_win(obj.aos+1+pk);
-                        peak_sort(2*(pk+1)-1) = peak_win(obj.aos+1-pk);
-                    else
-                        peak_sort(2*pk)       = peak_win(obj.aos+1-pk);
-                        peak_sort(2*(pk+1)-1) = peak_win(obj.aos+1+pk);
-                    end
-                end
-                sort_amp = fourier(peak_sort);
-                peak_sort(sort_amp==0)=[];
-                sort_amp(sort_amp==0)=[];
-    
-                % Search peak according to the crc
-                for n=1:length(peak_sort)
-                    sv_cor = find(obj.grayCode==peak_sort(n)-1)-1;
-%                     sv_cor = obj.rs_int_crc_lut(obj.grayCode(peak_sort(n))+1);
-                    dbits = int2bit(sv_cor, obj.SF)';
-                    dbits = dbits(:)';
-                    check_crc = sum(obj.CRC4(dbits.').');
-
-                    if(check_crc==0)
-                        peakMakcor = sort_amp(n);
-                        break
-                    else
-                        fourier(peak_sort(n))=0;
-                    end
-                end
-            end
-        end
-
-        % demodulation 
-        function [soft_bits, hard_bits, sv, sv_cor, fourier] = DELORAX_CRC(obj, mod_chirp, num_sym, tx_preamble, rx_preamble)
-
-            % ~~~~~~~~ Params ~~~~~~~~
-            nvar = std( abs(tx_preamble-rx_preamble).^2);
-            hard_bits = zeros(1,obj.SF*num_sym);
-            soft_bits = zeros(1,obj.SF*num_sym);
-            sv = zeros(1,num_sym);
-            sv_cor = zeros(1,num_sym);
-
-            % ~~~~~~~~ Demodulation ~~~~~~~~
-            for i = 1:num_sym
-            
-                d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
-                fourier = abs(fft(d));            % переводим результат в область частот
-
-                % ~~~~~~~~ Hard Decisions ~~~~~~~~
-                [peak_notcor, peak_cor, peakMakcor, dbits] = obj.HARD_CRC_DEMOD(fourier);
-                sv(i) = peak_notcor;
-                sv_cor(i) = peak_cor;
-                hard_bits(obj.SF*i-obj.SF+1:obj.SF*i) = dbits;
-            
-                % ~~~~~~~~ Soft Decisions ~~~~~~~~
-                fourier_soft = fourier(obj.grayCode+1);
-                for nBit=1:obj.SF
-                    m0 = obj.M0(:, nBit);
+                % Soft Decisions
+                for nBit=1:obj.RS
+                    m0 = obj.M0rs(:, nBit);
                     m0(m0==0)=[];
-                    m1 = obj.M1(:, nBit);
+                    m0g = obj.grayCode(m0)+1;
+
+                    m1 = obj.M1rs(:, nBit);
                     m1(m1==0)=[];
-                    LLR = -(1/nvar)*(min( (peakMakcor-fourier_soft(m0)).^2 ) - min( (peakMakcor-fourier_soft(m1)).^2 ));
-                    soft_bits(i*obj.SF-obj.SF+nBit) = LLR;
+                    m1g = obj.grayCode(m1)+1;
+%                     LLR = -(1/nvar)*(min( ( sv(i)-m0g).^2 ) - min( ( sv(i)-m1g).^2 ));
+% ( peak_RS-fourier_rs(m0g)).^2
+                    LLR = -(1/nvar)*(min( ( peak_RS-fourier_rs(m0g)).^2 ) - min( ( peak_RS-fourier_rs(m1g)).^2 ));
+                    soft_bits(i*obj.RS-obj.RS+nBit) = LLR;
                 end
-
             end
+
         end
 
-        %% ================================= LORA_FREQ_ESTIM
-
-%         function [r1, r2, fup_idx, fdown_idx, phi1, phi2] = fraq(obj, rx_preamb, rx_downch)
-% 
-% %             r1 = fft(rx_preamb(1:obj.Base).*obj.downch);
-% % %             r11 = fft(rx_preamb(obj.Base+1:2*obj.Base).*obj.downch);
-% %             r2 = fft(rx_downch.*conj(obj.downch));
-% %             [~, fup_idx] = max(abs(r1));
-% %             [~, fdown_idx] = max(abs(r2));
-% %             if(fup_idx>(obj.Base/2))
-% %                 fup_idx = (fup_idx-1)-obj.Base;
-% %             end
-% 
-%             %###################
-%             r1 = fft( [rx_preamb(1:obj.Base).*obj.downch, zeros(1,obj.Base*4)] );
-%             r2 = fft( [rx_downch.*conj(obj.downch), zeros(1,obj.Base*4)] );
-%             [~, fup_idx] = max(abs(r1));
-%             [~, fdown_idx] = max(abs(r2));
-%         
-%         %     if(fup_idx>(Base/2))
-%         %         fup_idx = (fup_idx-1)-Base;
-%         %     end
-%         
-%             if(fup_idx>(obj.Base*5/2))
-%                 fup_idx = (fup_idx-1)-obj.Base*5;
-%             end
-%             if(fdown_idx>(obj.Base*5/2))
-%                 fdown_idx = (fdown_idx-1)-obj.Base*5;
-%             end
-%             fup_idx = ceil(fup_idx/5); 
-%             fdown_idx = ceil(fdown_idx/5); 
-%             %###################
-% 
-%             %     if(fdown_idx>(Base/2))
-%             %         r2(fdown_idx)=0;
-%             %         [~, fdown_idx] = max(abs(r2));
-%             %     end
-%             
-%             %     [~, fup_idx2] = max(abs(r11));
-%             %     phi2 = angle(r1(fup_idx));
-%             %     phi1 = angle(r2(fup_idx2));
-%             phi2=0;
-%             phi1=0;
-%         
-%         end
-        function [r1, r2, fup_idx, fdown_idx, phi1, phi2] = fraq(obj, rx_preamb, rx_downch)
-            % 
-            N = obj.Base;
-            OS = 10;
-            r1 = 0;
-            num_pre = 4;
-            for i = 1:num_pre
-                r1 = r1 + abs( fft([rx_preamb(i*N-N+1:N*i).*obj.downch, zeros(1,N*(OS-1))]) );
-            end
-
-            r2 = fft( [rx_downch.*conj(obj.downch), zeros(1,obj.Base*(OS-1))] );
-            [~, fup_idx] = max(abs(r1));
-            [~, fdown_idx] = max(abs(r2));
-
-            if(fup_idx>(obj.Base*OS/2))
-                fup_idx = (fup_idx-1)-obj.Base*OS;
-            end
-            if(fdown_idx>(obj.Base*OS/2))
-                fdown_idx = (fdown_idx-1)-obj.Base*OS;
-            end
-%             fup_idx = round(fup_idx/OS); 
-%             fdown_idx = round(fdown_idx/OS);
-            fup_idx = fup_idx/OS; 
-            fdown_idx = fdown_idx/OS; 
-            %###################
-
-            phi2=0;
-            phi1=0;
-        end
 
         function [STOint, STOfraq, CFO, CFOdphi] = fraq2(obj, rx_preamb, rx_downch, num_pre)
             % ~~~~~~~~ 0. Coarse CFO and STO estimation ~~~~~~~~ 
@@ -470,7 +352,8 @@ classdef myLoRaClass_new
         function [output_signal, cor] = CORRELATION(obj, input_signal, preamble, signal_length)
 
             [cor,lags] = xcorr(input_signal, preamble);
-            cor(round(end/2):end) = cor(round(end/2):end).*gausswin(length(cor(round(end/2):end)), 1).';
+            cor= cor.*gausswin(length(cor), 1).';
+%             cor(round(end/2):end) = cor(round(end/2):end).*gausswin(length(cor(round(end/2):end)), 1).';
             [~, max_idx] = max(abs(cor));
             start = lags(max_idx);
             output_signal = input_signal(start+1:start+signal_length);
@@ -486,38 +369,6 @@ classdef myLoRaClass_new
             for j=1:len
                 output_signal(j)=input_signal(j).*exp(1i*dphi*j*(-1));
             end
-        end
-
-
-        %% ================================= SAMPLING ERROR EST AND COMP
-        function [output_signal] = STO_COMP(obj, input_signal, num_pre)
-
-            % input params
-            N = obj.Base;
-            fps = obj.BW/obj.Base;
-            num_symRM = length(input_signal)/obj.Base;
-            preamble_end = input_signal(end-num_pre*N*2+1:end);
-            downch_end = preamble_end(1:num_pre*N);
-            preamb_end = preamble_end(num_pre*N+1:num_pre*N*2);
-% num_symRM
-
-
-            [STOint, STOfraq, CFO, CFOdphi] = obj.fraq2(preamb_end, downch_end, num_pre);
-            STO = STOint+STOfraq;
-            est_te = STO*fps+CFO;
-            
-%             [est_te, ~] = obj.COARSE_FREQ_ESTIM(preamble_end, num_pre);
-            dphi_te = est_te*2*pi*(1/obj.BW)/num_symRM; % сдвиг
-            dphi_pdt = dphi_te;
-            
-            output_signal = zeros(1,length(input_signal));
-            for j=1:length(input_signal)
-                output_signal(j) = input_signal(j).*exp(-1i*j*(dphi_pdt));
-                if(mod(j,N)==0)
-                    dphi_pdt = dphi_pdt+dphi_te;
-                end
-            end
-            output_signal = output_signal(1:end-num_pre*N);
         end
 
         %% ================================= CYC SHIFT
@@ -556,91 +407,6 @@ classdef myLoRaClass_new
             dphi1 = est1*2*pi*(1/obj.BW); % сдвиг
         end
 
-        %% ================================= 4-x Stage Freq Est and Comp
-        function [freq_data, corrected_signal, corrected_preamb] = LORA_FREQ_ESTIM_v2(obj, input_signal, num_pre, sig_length)
-        
-            % ~~~~~~~~ Description ~~~~~~~~ 
-            %   input_signal - preamble+payload signals
-            %   N - length of the one chirp
-            %   num_pre - num of the preambles
-            
-            % ~~~~~~~~ Initializtion ~~~~~~~~
-            % Extract payload and preamble signals
-            N = obj.Base;
-            fps = obj.BW/obj.Base; % Определяем Hz/samp
-            rx_downch = input_signal(1:N);
-            rx_preamb = input_signal(N+1:N*(num_pre+1));
-
-            % STO and CFO estimation
-            [~, ~, fup_idx, fdown_idx, ~, ~] = obj.fraq(rx_preamb, rx_downch);
-            STOint = ceil((fup_idx-fdown_idx)/2);
-% STOint
-% N-STOint+sig_length
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            input_signal = input_signal((1+N)-STOint:N-STOint+sig_length);
-            channel_chirp_treshold = input_signal(1:num_pre*N);
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-            % ~~~~~~~~ 1. Coarse estimation ~~~~~~~~ 
-            [est1, dphi1] = obj.COARSE_FREQ_ESTIM(channel_chirp_treshold, num_pre);
-            [channel_chirp_realign] = obj.DPHI_COMP(channel_chirp_treshold, dphi1);
-
-            % ~~~~~~~~ 2. Fraq estimation ~~~~~~~~ 
-            % По двум последовательным одинаковым чирпам как в (1.) вычисляем CFO_fraq
-            left_ref  = obj.downch(1:N/2);
-            right_ref = obj.downch(N/2+1:N);
-            bpf3 = 0;
-            bpf4 = 0;
-            for i = 1:num_pre
-                chirp2est = channel_chirp_realign(i*N-N+1:i*N);
-                left_half = chirp2est(1:N/2);
-                right_half = chirp2est(N/2+1:N);
-                
-                bpf3 = bpf3 + fft( [left_half.*left_ref, zeros(1,N*4/2)]);
-                bpf4 = bpf4 + fft( [right_half.*right_ref, zeros(1,N*4/2)]);
-                
-            end
-            [max_a3] = max(bpf3);
-            [max_a4] = max(bpf4);
-            
-            a11=max(max_a3);
-            a12=max(max_a4);
-            est2_reg = (angle(a12)-angle(a11));
-
-            est2 = est2_reg/(pi*obj.Ts);
-            dphi2 = est2*2*pi*obj.Ts/obj.Base;
-%             dphi2 = 0;
-            
-            [channel_chirp_frac_est] = obj.DPHI_COMP(channel_chirp_realign, dphi2);
-
-            % ~~~~~~~~ 3. fine estimation ~~~~~~~~ 
-            % Устранение фазового сдвига
-            argumon = zeros(1, num_pre-1);
-            for i = 1:num_pre-1
-                argumon(i) = sum(channel_chirp_frac_est(i*N-N+1:N*i).*conj(channel_chirp_frac_est(i*N+1:N*i+N)));
-            end
-            
-            [arg] = -mean(angle(argumon));
-            est3 = arg/(2*pi*obj.Ts);
-            dphi3 = est3*2*pi/obj.BW; % сдвиг
-%             dphi3 = 0;
-
-            [channel_chirp_frac_est_v2] = obj.DPHI_COMP(channel_chirp_frac_est, dphi3);
-
-            % ~~~~~~~~ 4. Coarse estimation X2 ~~~~~~~~ 
-            [est4, dphi4] = obj.COARSE_FREQ_ESTIM(channel_chirp_frac_est_v2, num_pre);
-
- 
-            % ~~~~~~~~ Debugging ~~~~~~~~ 
-            freq_data = {STOint, est1, est2, est3, est4};
-
-            % ~~~~~~~~ Correcting Payload signal ~~~~~~~~  
-             dphi_full = dphi1+dphi2+dphi3+dphi4;
-            [corrected_signal] = obj.DPHI_COMP(input_signal, dphi_full);
-            corrected_preamb = corrected_signal(1:num_pre*N);
-            corrected_signal = corrected_signal(num_pre*N+1:end);
-        
-        end
         function [freq_data, corrected_signal, corrected_preamb] = LORA_FREQ_ESTIM_v3(obj, input_signal, num_pre)
         
             % ~~~~~~~~ Description ~~~~~~~~ 
@@ -651,7 +417,7 @@ classdef myLoRaClass_new
             % ~~~~~~~~ Initializtion ~~~~~~~~
             % Extract payload and preamble signals
             N = obj.Base;
-            fps = obj.BW/obj.Base;
+%             fps = obj.BW/obj.Base;
             pre_len = obj.Base*num_pre;
             rx_control = input_signal(1:pre_len*2);
             rx_downch = rx_control(1:pre_len);
@@ -676,10 +442,7 @@ classdef myLoRaClass_new
             rx_control2 = input_signal_ifft(1:pre_len*2);
             rx_control2 = obj.DPHI_COMP(rx_control2, CFOdphi);
             rx_preamb2 = rx_control2(pre_len+1:pre_len*2);
-
-            
-            
-            
+   
             
             % ~~~~~~~~ 3.0 Fine estimation ~~~~~~~~ 
             % Устранение фазового сдвига
@@ -708,9 +471,11 @@ classdef myLoRaClass_new
 
 
             % ~~~~~~~~ 5.0 Final Compensation ~~~~~~~~ 
-%             CFOdphi = 0;
-%             dphi3 = 0;
-            CFOdphi+dphi3;
+%             fprintf('CFO %.2f\n', CFO)
+%             fprintf('est3 %.2f\n', est3)
+%             fprintf('CFO+est3 %.2f\n', CFO+est3)
+%             fprintf('STO %.2f\n', STO)
+
             input_signal2 = obj.DPHI_COMP(input_signal_ifft, (CFOdphi+dphi3+0));
             corrected_preamb = input_signal2(pre_len+1:pre_len*2);
             corrected_signal = input_signal2(pre_len*2+1:end);
@@ -721,56 +486,6 @@ classdef myLoRaClass_new
             % ~~~~~~~~ Debugging ~~~~~~~~ 
             freq_data = {STO, CFO, est3, 0};
         
-        end
-
-        %% ================================= CRC
-        function [CRC_Bits] = CRC4(obj, input);
-            % Тип CRC
-            crc_poly = [1, 0, 0, 1, 1];    
-            crc_len  = 4;
-            % elseif(crc_type==3)
-            %     crc_poly = [1, 0, 1, 1];    
-            %     crc_len  = 3;
-            % end
-            crc_rem   = zeros(1,crc_len+1);
-            tmp_array = vertcat(input, zeros(crc_len,1));
-            
-            % Вычисление CRC
-            for n=1:length(input)+crc_len
-                for k=1:crc_len 
-                    crc_rem(k) = crc_rem(k+1); 
-                end
-                crc_rem(crc_len+1) = tmp_array(n);
-            
-                if(crc_rem(1) ~= 0)
-                    for k=1:crc_len+1
-                        crc_rem(k) = mod(crc_rem(k)+crc_poly(k), 2); 
-                    end
-                end
-            end
-            CRC_Bits = zeros(crc_len,1);
-            for n=1:crc_len 
-                CRC_Bits(n,1) = crc_rem(n+1); 
-            end
-        end
-
-        function [TEraw] = TIME_ERR(obj, product);
-            
-            [~, ind_max] = max( abs(product) );
-            if((ind_max-1)<=0)
-                mag1 = abs(product(obj.Base+(ind_max-1)));
-            else
-                mag1 = abs(product(ind_max-1));
-            end
-        
-            mag2 = abs(product(ind_max));
-        %     mag3 = abs(product(ind_max+1));
-            if((ind_max+1)>obj.Base)
-                mag3 = abs(product((ind_max+1)-obj.Base));
-            else
-                mag3 = abs(product(ind_max+1));
-            end
-            TEraw = (mag3-mag1)/mag2;
         end
 
         %% ================================= LDPC
@@ -983,156 +698,89 @@ classdef myLoRaClass_new
 end
 
 
-% 
-%         %% ================================= delorax_llr
-%         function [L, sv, fourier] = delorax_llr(obj, mod_chirp, num_sym, tx_preamble, rx_preamble)
-% 
-%             % Param
-%             nvar = std( abs(tx_preamble-rx_preamble).^2);
-%             sv = zeros(1,num_sym);
-%             L = [];
-% 
-%             % LLR bitmap
-%             bitmap = de2bi(0:obj.Base-1);
-%             M0 = zeros(obj.Base, obj.SF);
-%             M1 = zeros(obj.Base, obj.SF);
-%             for nBit=1:obj.SF
-%                 for nSym = 1:obj.Base
-%                     if( bitmap(nSym, nBit) == 0)
-%                         M0(nSym,nBit)= nSym;
-%                     else
-%                         M1(nSym,nBit)= nSym;
-%                     end
-%                 end
-%             end
-% 
-%             % Demodulation
-%             for i = 1:num_sym
+
+%         %% ================================= 4-x Stage Freq Est and Comp
+%         function [freq_data, corrected_signal, corrected_preamb] = LORA_FREQ_ESTIM_v2(obj, input_signal, num_pre, sig_length)
+%         
+%             % ~~~~~~~~ Description ~~~~~~~~ 
+%             %   input_signal - preamble+payload signals
+%             %   N - length of the one chirp
+%             %   num_pre - num of the preambles
 %             
-%                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
-%                 
-%                 fourier = abs(fft(d));            % переводим результат в область частот
-%                 [peakMak, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
-%             
-%                 % вычисляем значение кодового слова исходя из базы сигнала
-%                 sv(i) = indexMax-1;
-%             
-%                 % LLR
-%                 for nBit=1:obj.SF
-%                     m0 = M0(:, nBit);
-%                     m0(m0==0)=[];
-%                     m1 = M1(:, nBit);
-%                     m1(m1==0)=[];
-% %                       LLR = -(1/nvar)*(min( (peakMak-fourier(m0)).^2 ) - min( (peakMak-fourier(m1)).^2 ));
-%                   LLR = -(1/nvar)*(min( (peakMak-fourier( obj.grayCode(m0)+1 )).^2 ) - min( (peakMak-fourier( obj.grayCode(m1)+1 )).^2 ));
-%                   L = [L LLR];
-%                 end
-%             end
-%         end
-
-
-
-%         function [demod_bits, sv_cor, sv, fourier] = DELORAX_CRC(obj, mod_chirp, num_sym, aos)
+%             % ~~~~~~~~ Initializtion ~~~~~~~~
+%             % Extract payload and preamble signals
+%             N = obj.Base;
+%             fps = obj.BW/obj.Base; % Определяем Hz/samp
+%             rx_downch = input_signal(1:N);
+%             rx_preamb = input_signal(N+1:N*(num_pre+1));
 % 
-%             demod_bits = [];
-%             aos_win = -aos:aos;
-%         
-%             for i = 1:num_sym
-%         
-%                 % Fourier
-%                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
-%                 fourier = abs(fft(d));            % переводим результат в область частот
-%                 [~, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
-%         
-%                 % вычисляем значение кодового слова исходя из базы сигнала
-%                 
-%                 % CRC
-%                 sv(i) = indexMax-1;
-%                 peak_win = indexMax+aos_win;
-%                 peak_win(peak_win<=0)=[];
-%                 peak_win(peak_win>obj.Base)=[];
-%                 peaks_amp = fourier(peak_win);
-%                 [~, sort_idx] = sort(peaks_amp,'descend');
-%                 peak_sort = peak_win(sort_idx);
+%             % STO and CFO estimation
+%             [~, ~, fup_idx, fdown_idx, ~, ~] = obj.fraq(rx_preamb, rx_downch);
+%             STOint = ceil((fup_idx-fdown_idx)/2);
+% % STOint
+% % N-STOint+sig_length
+%             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%             input_signal = input_signal((1+N)-STOint:N-STOint+sig_length);
+%             channel_chirp_treshold = input_signal(1:num_pre*N);
+%             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 
-%                 for n=1:length(peak_sort)
-%                     sv_cor(i) = peak_sort(n)-1;
-%                     dbits = de2bi(sv_cor(i),obj.SF)';
-%                     dbits = dbits(:)';
-%                     check_crc = sum(CRC4(dbits.').');
-%                     if(check_crc==0)
-%                         break
-%                     end
-%                 end
-%                 demod_bits = [demod_bits, dbits];
-%             end
-%         
-%         end
-
-
-
-
-
 %             % ~~~~~~~~ 1. Coarse estimation ~~~~~~~~ 
-%             pre_align = zeros(1,num_pre);
-%             for i = 1:num_pre
-%                 fourier = abs(fft(channel_chirp_treshold(i*N-N+1:N*i).*obj.downch));
-%                 [~, ind1] = max( fourier );
+%             [est1, dphi1] = obj.COARSE_FREQ_ESTIM(channel_chirp_treshold, num_pre);
+%             [channel_chirp_realign] = obj.DPHI_COMP(channel_chirp_treshold, dphi1);
 % 
-%                 if(ind1>N/2)
-%                     pre_align(i) = (ind1-1)-N;
-%                 else
-%                     pre_align(i) = ind1-1;
-%                 end
-%             end
-%             
-%             est1 = (mean(pre_align))*fps; % UNCOMMENT
-% %             est1 = round(mean(pre_align))*fps;
-%             dphi1 = est1*2*pi*(1/obj.BW); % сдвиг
-
 %             % ~~~~~~~~ 2. Fraq estimation ~~~~~~~~ 
 %             % По двум последовательным одинаковым чирпам как в (1.) вычисляем CFO_fraq
-%             left_ref = obj.downch(1:N/2);
+%             left_ref  = obj.downch(1:N/2);
 %             right_ref = obj.downch(N/2+1:N);
-%             
+%             bpf3 = 0;
+%             bpf4 = 0;
 %             for i = 1:num_pre
 %                 chirp2est = channel_chirp_realign(i*N-N+1:i*N);
 %                 left_half = chirp2est(1:N/2);
 %                 right_half = chirp2est(N/2+1:N);
 %                 
-%                 bpf3 = fft(left_half.*left_ref);
-%                 bpf4 = fft(right_half.*right_ref);
+%                 bpf3 = bpf3 + fft( [left_half.*left_ref, zeros(1,N*4/2)]);
+%                 bpf4 = bpf4 + fft( [right_half.*right_ref, zeros(1,N*4/2)]);
 %                 
-%                 [max_a3] = max(bpf3);
-%                 [max_a4] = max(bpf4);
-%                 
-%                 a11=max(max_a3);
-%                 a12=max(max_a4);
-%                 est2_reg(i) = (angle(a12)-angle(a11));
 %             end
-%             est2 = mean(est2_reg)/(pi*obj.Ts);
+%             [max_a3] = max(bpf3);
+%             [max_a4] = max(bpf4);
+%             
+%             a11=max(max_a3);
+%             a12=max(max_a4);
+%             est2_reg = (angle(a12)-angle(a11));
+% 
+%             est2 = est2_reg/(pi*obj.Ts);
 %             dphi2 = est2*2*pi*obj.Ts/obj.Base;
+% %             dphi2 = 0;
 %             
-%             % точное устранение фазового набега
-%             channel_chirp_frac_est = zeros(1,length(channel_chirp_realign));
-%             for j=1:length(channel_chirp_realign)
-%                 channel_chirp_frac_est(j) = channel_chirp_realign(j).*exp(1i*dphi2*j*(-1));
-%             end
-%             
+%             [channel_chirp_frac_est] = obj.DPHI_COMP(channel_chirp_realign, dphi2);
+% 
 %             % ~~~~~~~~ 3. fine estimation ~~~~~~~~ 
 %             % Устранение фазового сдвига
+%             argumon = zeros(1, num_pre-1);
 %             for i = 1:num_pre-1
-%                 argumon(i*N-N+1:N*i) = channel_chirp_realign(i*N-N+1:N*i).*conj(channel_chirp_realign(i*N+1:N*i+N));
+%                 argumon(i) = sum(channel_chirp_frac_est(i*N-N+1:N*i).*conj(channel_chirp_frac_est(i*N+1:N*i+N)));
 %             end
 %             
-%             [arg] = max(sum(argumon));
-%             est3 = -angle(arg)/(2*pi*obj.Ts);
+%             [arg] = -mean(angle(argumon));
+%             est3 = arg/(2*pi*obj.Ts);
+%             dphi3 = est3*2*pi/obj.BW; % сдвиг
+% %             dphi3 = 0;
 % 
-%             % Устраняем CFO_fraq сигнала
-%             dphi3 = est3*2*pi*obj.Ts/obj.Base; % сдвиг
+%             [channel_chirp_frac_est_v2] = obj.DPHI_COMP(channel_chirp_frac_est, dphi3);
+% 
+%             % ~~~~~~~~ 4. Coarse estimation X2 ~~~~~~~~ 
+%             [est4, dphi4] = obj.COARSE_FREQ_ESTIM(channel_chirp_frac_est_v2, num_pre);
+% 
+%  
+%             % ~~~~~~~~ Debugging ~~~~~~~~ 
+%             freq_data = {STOint, est1, est2, est3, est4};
+% 
+%             % ~~~~~~~~ Correcting Payload signal ~~~~~~~~  
+%              dphi_full = dphi1+dphi2+dphi3+dphi4;
+%             [corrected_signal] = obj.DPHI_COMP(input_signal, dphi_full);
+%             corrected_preamb = corrected_signal(1:num_pre*N);
+%             corrected_signal = corrected_signal(num_pre*N+1:end);
 %         
-%             % точное устранение фазового набега
-%             preamb_align = zeros(1,length(channel_chirp_realign));
-%             for j=1:length(channel_chirp_realign)
-%                 preamb_align(j) = channel_chirp_realign(j).*exp(1i*dphi3*j*(-1));
-%             end
+%         end

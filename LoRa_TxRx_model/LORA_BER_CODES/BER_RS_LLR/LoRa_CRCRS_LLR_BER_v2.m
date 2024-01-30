@@ -64,7 +64,7 @@ for j=1:length(mod_chirp)
 end
 
 tic
-snr = -10;
+% snr = -5;
 for n = 1:length(snr)
     fprintf('Iter: %d\n', n) 
 

@@ -1,7 +1,7 @@
 classdef myLoRaClass_RSG
    
     properties
-        % коэффициенты
+        % коэффициенты 
         SF;         % Коэффициент расширения спектра (от 7 до 12)
         Base;       % База сигнала
         BW;         % Signal Bandwidth
@@ -36,11 +36,15 @@ classdef myLoRaClass_RSG
         aos = 3;    % Area of Peak search to Calculate CRC
         aos_win;    % Window of Peak search to Calculate CRC
 
-        %
+        % Soft Decisions
         M0;         % matrix with peak-to-bitvalue==0
         M1;         % matrix with peak-to-bitvalue==1
         M0rs;
         M1rs;
+
+        % Freq estimator parameters
+        OS;
+
     end
 
     methods
@@ -52,8 +56,8 @@ classdef myLoRaClass_RSG
             obj.Base = 2^SF; 
             obj.BW = BW; 
             obj.Ts = (2^SF)/BW;
-            obj.ts = 1/(BW);              % время дискретизации
-            obj.m = BW/obj.Ts;              % коэффициент измнения частоты
+            obj.ts = 1/(obj.BW);              % время дискретизации
+            obj.m = obj.BW/obj.Ts;              % коэффициент измнения частоты
             obj.t = 0:obj.ts:obj.Ts-obj.ts;         % полоса времени ОДНОГО чирпа
 
             % ~~~~~~~~ Reduced set parameters ~~~~~~~~
@@ -66,7 +70,6 @@ classdef myLoRaClass_RSG
             obj.fir_win = gausswin(obj.rs_factor+1).';
 
             % ~~~~~~~~ Gray code ~~~~~~~~
-%             obj.Base_rs = obj.Base; %%%%%%%%%%%%%%%%%%%%%
             obj.grayCode = zeros(1, obj.Base_rs);
             for i = 0:obj.Base_rs-1
                 obj.grayCode(i+1) = bitxor(i, bitshift(i, -1));
@@ -78,7 +81,6 @@ classdef myLoRaClass_RSG
             end
 
             % ~~~~~~~~ CRC code ~~~~~~~~
-%             obj.bits2sym = obj.SF-obj.crclen;
             obj.bits2sym = obj.RS;
             obj.aos_win  = -obj.aos:obj.aos;
 
@@ -118,6 +120,9 @@ classdef myLoRaClass_RSG
                     end
                 end
             end
+
+            % Freq estimation
+            obj.OS = 8;
             
         end
 
@@ -170,8 +175,23 @@ classdef myLoRaClass_RSG
                 
                 chirp1 = obj.chirp(cs+1:end); % первый чирп
                 chirp2 = obj.chirp(1:cs); % второй чирп
-
                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = [chirp1, chirp2];
+
+%                 n=1:obj.Base-0;
+%                 D = exp(1i*pi*(n.^2+2*cs*n)*(1/(obj.Base)));
+%                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = D;
+
+%                 arg_step = 360/num_sym;
+%                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = D.*exp(1i*i*arg_step*pi/180*sign(randn));
+
+
+%                 fps = obj.BW/obj.Base;
+%                 freq_shift = fps*cs; 
+%                 dphi=freq_shift*2*pi*(1/obj.BW);% сдвиг
+%                 shifting = exp(1i*dphi*(1:obj.Base));
+%                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = obj.chirp.*shifting;
+
+
             end 
         end
 
@@ -184,10 +204,11 @@ classdef myLoRaClass_RSG
             fourier_rs = zeros(1, obj.Base_rs);
             for rs_peak_idx=1:obj.Base_rs
                 rs_win = obj.CYC_SHIFT(obj.rs_peaks(rs_peak_idx)+obj.rs_aos);
-%                 fourier_rs(rs_peak_idx) = max( (fourier(rs_win).*obj.fir_win) );
+                fourier_rs(rs_peak_idx) = max( (fourier(rs_win).*obj.fir_win) );
 %                 fourier_rs(rs_peak_idx) = mean( fourier(rs_win).*obj.fir_win );
-                fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*obj.fir_win) );
-%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*new_win) );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*obj.fir_win) );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*conj(fourier(rs_win))).*obj.fir_win );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*conj(fourier(rs_win))).*obj.fir_win );
             end
 
         end
@@ -212,7 +233,7 @@ classdef myLoRaClass_RSG
             for i = 1:num_sym
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 
-                fourier = abs(fft(d));            % переводим результат в область частот
+                fourier = abs(fft(d));            % переводим результат в область частот %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
                 [peak_code, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
                 [peak_decode, indexMaxGray] = max( fourier(obj.grayCode_nonrs+1) ); % находим щелчок  частоты в чирпе
     
@@ -258,11 +279,13 @@ classdef myLoRaClass_RSG
             sv_rs = zeros(1,num_sym);
 
             % Demodulation
+%             fourier_array = zeros(num_sym, Base);
             for i=1:num_sym
                 
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 fourier = abs(fft(d));            % переводим результат в область частот
                 fourier_rs = (obj.reduced_set_fourier( fourier ));
+%                 fourier_array(i,:) = fourier;
 
                 [peak_RS, indexMax] = max( fourier_rs ); % находим щелчок  частоты в чирпе
                 sv(i) = obj.rs_peaks_lut(obj.grayCode==(indexMax-1));
@@ -281,7 +304,7 @@ classdef myLoRaClass_RSG
                     m1 = obj.M1rs(:, nBit);
                     m1(m1==0)=[];
                     m1g = obj.grayCode(m1)+1;
-%                     LLR = -(1/nvar)*(min( ( sv(i)-m0g).^2 ) - min( ( sv(i)-m1g).^2 ));
+%                     LLR = -(1/nvar)*(min( ( (sv(i)+1)-m0g).^2 ) - min( ( (sv(i)+1)-m1g).^2 ));
 % ( peak_RS-fourier_rs(m0g)).^2
                     LLR = -(1/nvar)*(min( ( peak_RS-fourier_rs(m0g)).^2 ) - min( ( peak_RS-fourier_rs(m1g)).^2 ));
                     soft_bits(i*obj.RS-obj.RS+nBit) = LLR;
@@ -291,43 +314,11 @@ classdef myLoRaClass_RSG
         end
 
 
-        function [STOint, STOfraq, CFO, CFOdphi] = fraq2(obj, rx_preamb, rx_downch, num_pre)
-            % ~~~~~~~~ 0. Coarse CFO and STO estimation ~~~~~~~~ 
-            N = obj.Base;
-            fps = obj.BW/N;
-            OS = 10;
-            r1 = 0;
-            r2 = 0;
-            for i = 1:num_pre
-                r1 = r1 + abs( fft([rx_preamb(i*N-N+1:N*i).*obj.downch, zeros(1,N*(OS-1))]) );
-                r2 = r2 + abs( fft([rx_downch(i*N-N+1:N*i).* obj.chirp, zeros(1,N*(OS-1))]) );
-            end
-            
-%             r2 = fft( [rx_downch.*conj(obj.downch), zeros(1,obj.Base*(OS-1))] );
-            [~, fup_idx] = max(abs(r1));
-            [~, fdown_idx] = max(abs(r2));
-            
-            if(fup_idx>(obj.Base*OS/2))
-                fup_idx = (fup_idx-1)-obj.Base*OS;
-            end
-            if(fdown_idx>(obj.Base*OS/2))
-                fdown_idx = (fdown_idx-1)-obj.Base*OS;
-            end
-            fup_idx = fup_idx/OS; 
-            fdown_idx = fdown_idx/OS;
-            
-            STO = (fup_idx-fdown_idx)/2;
-            STOint = round(STO);
-            STOfraq = STO-STOint;
-            CFO = fps*(fup_idx+fdown_idx)/2;
-            CFOdphi = CFO*2*pi*(1/obj.BW);
-        end
-
         %% ================================= Correlation
         function [output_signal, cor] = CORRELATION(obj, input_signal, preamble, signal_length)
 
-            [cor,lags] = xcorr(input_signal, preamble);
-            cor= cor.*gausswin(length(cor), 1).';
+            [cor,lags] = xcorr(input_signal(1:round(end/2)), preamble);
+%             cor= cor.*gausswin(length(cor), 1).';
 %             cor(round(end/2):end) = cor(round(end/2):end).*gausswin(length(cor(round(end/2):end)), 1).';
             [~, max_idx] = max(abs(cor));
             start = lags(max_idx);
@@ -345,6 +336,7 @@ classdef myLoRaClass_RSG
                 output_signal(j)=input_signal(j).*exp(1i*dphi*j*(-1));
             end
         end
+
 
         %% ================================= CYC SHIFT
         function [output_vector] = CYC_SHIFT(obj, input_vector)
@@ -368,27 +360,159 @@ classdef myLoRaClass_RSG
 
             N = obj.Base;
             fps = obj.BW/N;
-            OS = 5;
-            NOS = N*OS;
+%             obj.OS = 1; %%%%%%%%%%%%%%%%%%%%%%%%
+            NOS = N*obj.OS;
             fourier = 0;
 
             for i = 1:num_pre
-                fourier = fourier + fftshift( abs(fft( [input_signal(i*N-N+1:N*i).*obj.downch, zeros(1,N*(OS-1))] )) );
+                fourier = fourier + fftshift( abs(fft( [input_signal(i*N-N+1:N*i).*obj.downch, zeros(1,N*(obj.OS-1))] )) );
             end
             [~, ind1] = max( fourier );
             pre_align = (ind1-1)-NOS/2;  
 
-            est1 = pre_align*fps/OS; % UNCOMMENT
+            est1 = pre_align*fps/obj.OS; % UNCOMMENT
             dphi1 = est1*2*pi*(1/obj.BW); % сдвиг
         end
 
+
+        %% ================================= Freq and Time error estimation
+        function [STO, STOint, STOfraq, CFO, CFOdphi] = fraq2(obj, rx_preamb, rx_downch, num_pre)
+            % ~~~~~~~~ 0. Coarse CFO and STO estimation ~~~~~~~~ 
+            N = obj.Base;
+            fps = obj.BW/N;
+            obj.OS = 8;%%%%%%%%%%%%%%%%%%%%%%%%
+            r1 = 0;
+            r2 = 0;
+            for i = 1:num_pre
+%                 r1 = r1 + abs( fft([rx_preamb(i*N-N+1:N*i).*obj.downch, zeros(1,N*(obj.OS-1))]) );
+%                 r2 = r2 + abs( fft([rx_downch(i*N-N+1:N*i).* obj.chirp, zeros(1,N*(obj.OS-1))]) );
+                r1 = r1 + abs( fft([rx_preamb(i*N-N+1:N*i).*obj.downch.*tukeywin(N).', zeros(1,N*(obj.OS-1))]) );
+                r2 = r2 + abs( fft([rx_downch(i*N-N+1:N*i).* obj.chirp.*tukeywin(N).', zeros(1,N*(obj.OS-1))]) );
+            end
+            
+            [~, fup_idx] = max(abs(r1));
+            [~, fdown_idx] = max(abs(r2));
+            
+            if(fup_idx>(obj.Base*obj.OS/2))
+                fup_idx = (fup_idx-1)-obj.Base*obj.OS;
+            else
+                fup_idx = (fup_idx-1);
+            end
+            if(fdown_idx>(obj.Base*obj.OS/2))
+                fdown_idx = (fdown_idx-1)-obj.Base*obj.OS;
+            else
+                fdown_idx = (fdown_idx-1);
+            end
+            fup_idx = fup_idx/obj.OS; 
+            fdown_idx = fdown_idx/obj.OS;
+            
+            STO = (fup_idx-fdown_idx)/2;
+            STOint = round(STO);
+%             STOint = floor(STO);
+            STOfraq = STO-STOint;
+%             if(sign(STO)==-1)
+%                 STOint = ceil(STO);
+%                 STOfraq = STO-STOint;
+%             elseif(sign(STO)==1)
+%                 STOint = floor(STO);
+%                 STOfraq = STO-STOint;
+%             elseif(sign(STO)==0)
+%                 STOint = 0;
+%                 STOfraq = STO-STOint;
+%             end
+            
+
+            CFO = fps*(fup_idx+fdown_idx)/2;
+            CFOdphi = CFO*2*pi*(1/obj.BW);
+
+        end
+
+
+ %% ================================= Freq and Time error estimation
+        function [STO, STOint, STOfraq, CFO, CFOdphi] = fraq3(obj, rx_preamb, rx_downch, num_pre)
+            % ~~~~~~~~ 0. Coarse CFO and STO estimation ~~~~~~~~ 
+            N = obj.Base;
+            fps = obj.BW/N;
+            obj.OS = 8;%%%%%%%%%%%%%%%%%%%%%%%%
+            r1 = 0;
+            r2 = 0;
+            for i = 1:num_pre
+                r1 = r1 + abs( fft([rx_preamb(i*N-N+1:N*i).*obj.downch, zeros(1,N*(obj.OS-1))]) );
+            end
+            for i = 1:num_pre
+                r2 = r2 + abs( fft(rx_downch(i*N-N+1:N*i).* obj.chirp) );
+            end
+
+            [~, fup_idx] = max(abs(r1));
+            [~, fdown_idx] = max(abs(r2));
+            
+            if(fup_idx>(obj.Base*obj.OS/2))
+                fup_idx = (fup_idx-1)-obj.Base*obj.OS;
+            else
+                fup_idx = (fup_idx-1);
+            end
+            if(fdown_idx>(obj.Base/2))
+                fdown_idx = (fdown_idx-1)-obj.Base;
+            else
+                fdown_idx = (fdown_idx-1);
+            end
+            fup_idx = fup_idx/obj.OS; 
+%             fdown_idx = fdown_idx/obj.OS;
+            
+            STO = (fup_idx-fdown_idx)/2;
+            STOint = round(STO);
+            STOfraq = STO-STOint;
+            CFO = fps*(fup_idx+fdown_idx)/2;
+            CFOdphi = CFO*2*pi*(1/obj.BW);
+
+        end
+
+
+
+ %% ================================= Farrow interpolation
+        function output_signal = farrow(obj, input_signal, STOfrac)
+        
+            [sn2, sn3] = deal(0);
+            sn1 = input_signal(1);
+        
+            dt = -STOfrac;
+            slen = length(input_signal);
+            output_signal = zeros(1, slen);
+        
+            for k=1:slen
+                
+                if((k+1)<=slen)
+                    sn = input_signal(k+1);
+                else
+                    sn = 0;
+                end
+            
+                a0 = sn1;
+                a3 = (1/6)*(sn-sn3) + 0.5*(sn2-sn1);
+                a1 = 0.5*(sn-sn2) - a3;
+                a2 = sn-sn1-a1-a3;
+            
+                output_signal(k) = dt*(dt*(dt*a3+a2)+a1)+a0;
+            
+                sn3 = sn2;
+                sn2 = sn1;
+                sn1 = sn;
+            end
+        end
+
+
+
+
+
+        %% ================================= NEW Freq and Time error estimation And Compensation
         function [freq_data, corrected_signal, corrected_preamb] = LORA_FREQ_ESTIM_v3(obj, input_signal, num_pre)
         
             % ~~~~~~~~ Description ~~~~~~~~ 
             %   input_signal - preamble+payload signals
             %   N - length of the one chirp
             %   num_pre - num of the preambles
-            
+           
+
             % ~~~~~~~~ Initializtion ~~~~~~~~
             % Extract payload and preamble signals
             N = obj.Base;
@@ -399,16 +523,24 @@ classdef myLoRaClass_RSG
             rx_preamb = rx_control(pre_len+1:pre_len*2);
 
             % ~~~~~~~~ 0. Coarse CFO and STO estimation ~~~~~~~~ 
-            [STOint, STOfraq, CFO, CFOdphi] = obj.fraq2( rx_preamb, rx_downch, num_pre);
-%             STOint, STOfraq, CFO, CFOdphi
-            STO = STOint+STOfraq;
+            [STO, STOint, STOfraq, CFO, CFOdphi] = obj.fraq2( rx_preamb, rx_downch, num_pre);
+%             [STO, STOint, STOfraq, CFO, CFOdphi] = obj.fraq3( rx_preamb, rx_downch, num_pre);
+% CFO = 0;
+% CFOdphi = 0;
 
             % ~~~~~~~~ 00. Coarse CFO and STO compensation ~~~~~~~~ 
             % ~~~~~~~~ 01. STO compensation ~~~~~~~~ 
-            input_signal_fft = fft(input_signal);
-            STOintphi = STO*2*pi/length(input_signal_fft);
-%             STOintphi = STOint*2*pi/length(input_signal_fft);
-            input_signal_ifft = ifft(obj.DPHI_COMP(input_signal_fft, STOintphi));
+%             STOintphi = (STOint-STOfraq)*2*pi/length(input_signal);
+            STOintphi = STO*2*pi/length(input_signal);
+%             STOintphi = STOint*2*pi/length(input_signal);
+%             dt = STO*(obj.Ts/obj.Base);
+%             STOintphi = 2*pi*(dt/obj.Ts);
+%             STOintphi = 0;
+%             STOintphi = STOint*(obj.BW/obj.Base)*2*pi*(obj.Ts);
+% STOtest = 1*(STO*2*pi)/obj.Base;
+            input_signal_ifft = ifft(obj.DPHI_COMP(fft(input_signal), STOintphi));
+%             input_signal_ifft = obj.farrow(input_signal, -STO);
+%             input_signal_ifft = input_signal; %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
             % ~~~~~~~~ 02. STO compensation ~~~~~~~~ 
 %             rx_preamb2 = input_signal_ifft(1:N*(num_pre+1));
@@ -426,24 +558,31 @@ classdef myLoRaClass_RSG
             for i = 1:num_pre-1
                 Y1 = fft(rx_preamb2(i*N+1:N*i+N).*obj.downch);
                 Y0 = fft(rx_preamb2(i*N-N+1:N*i).*obj.downch);
-                [~, indmax1] = max(Y1);
-                [~, indmax0] = max(Y0);
+                [~, indmax1] = max(abs(Y1));
+                [~, indmax0] = max(abs(Y0));
                 indwin1 = obj.CYC_SHIFT(indmax1+Yaos);
                 indwin0 = obj.CYC_SHIFT(indmax0+Yaos);
             
-                argumon(i) = angle( sum( Y1(indwin1) .* conj(Y0(indwin0)) ) );
+                argumon(i) = angle( sum( Y1(indwin1) .* conj(Y0(indwin0)) ) ); 
             end
-            
             [arg] = mean(argumon);
             est3 = arg/(2*pi*obj.Ts);
             dphi3 = est3*2*pi/obj.BW; % сдвиг
+%             % ~~~~~~~~ 3. Fine estimation ~~~~~~~~ 
+%             for i = 1:num_pre-1
+%                 argumon(i) = sum(rx_preamb2(i*obj.Base-obj.Base+1:obj.Base*i).*conj(rx_preamb2(i*obj.Base+1:obj.Base*i+obj.Base)));
+%             end
+%             [arg] = sum(argumon);
+%             est3 = -angle(arg)/(2*pi*obj.Ts);
+%             dphi3 = est3*2*pi*obj.Ts/obj.Base; % сдвиг
             
+%             CFOdphi = 0;
+%             dphi3 = 0;
 %             % ~~~~~~~~ 3.1 Fine Compensation ~~~~~~~~ 
 %             rx_preamb3 = obj.DPHI_COMP(rx_preamb2, dphi3);
 % 
 %             % ~~~~~~~~ 4. Coarse estimation X2 ~~~~~~~~ 
 %             [est4, dphi4] = obj.COARSE_FREQ_ESTIM(rx_preamb3, num_pre);
-
 
             % ~~~~~~~~ 5.0 Final Compensation ~~~~~~~~ 
 %             fprintf('CFO %.2f\n', CFO)
@@ -451,16 +590,202 @@ classdef myLoRaClass_RSG
 %             fprintf('CFO+est3 %.2f\n', CFO+est3)
 %             fprintf('STO %.2f\n', STO)
 
+%             input_signal2 = obj.DPHI_COMP(input_signal_ifft, (CFOdphi+dphi3+0));
             input_signal2 = obj.DPHI_COMP(input_signal_ifft, (CFOdphi+dphi3+0));
             corrected_preamb = input_signal2(pre_len+1:pre_len*2);
             corrected_signal = input_signal2(pre_len*2+1:end);
+
+            phase_shift = angle(sum(repmat(obj.chirp,1,num_pre).*conj(corrected_preamb)));
+            corrected_preamb = corrected_preamb.*exp(1i*phase_shift);
+            corrected_signal = corrected_signal.*exp(1i*phase_shift);
 %             input_signal2 = obj.DPHI_COMP(input_signal_ifft, (CFOdphi+dphi3+0));
 %             corrected_preamb = input_signal2(obj.Base+1:obj.Base*(num_pre+1));
 %             corrected_signal = input_signal2(obj.Base*(num_pre+1)+1:end);
 
             % ~~~~~~~~ Debugging ~~~~~~~~ 
-            freq_data = {STO, CFO, est3, 0};
+            freq_data = {[STOint, STOfraq], CFO, est3};
         
+        end
+
+
+        %% ================================= OLD Freq and Time error estimation And Compensation
+        function [freq_data, corrected_preamb, corrected_signal] = LORA_FREQ_ESTIM_old(obj, input_signal, num_pre)
+        
+            % ~~~~~~~~ Description ~~~~~~~~ 
+            %   input_signal - preamble+payload signals
+            %   N - length of the one chirp
+            %   num_pre - num of the preambles
+            
+            % ~~~~~~~~ Initializtion ~~~~~~~~
+            % Extract payload and preamble signals
+            fps = obj.BW/obj.Base; % Определяем Hz/samp
+            rx_preamb = input_signal(1:obj.Base*num_pre);
+
+            % ~~~~~~~~ 1. Coarse estimation ~~~~~~~~ 
+            [est1, dphi1] = obj.COARSE_FREQ_ESTIM(rx_preamb, num_pre);
+            [rx_preamb_comp1] = obj.DPHI_COMP(rx_preamb, dphi1);
+
+            % ~~~~~~~~ 2. Fraq estimation ~~~~~~~~ 
+            % По двум последовательным одинаковым чирпам как в (1.) вычисляем CFO_fraq
+            left_ref  = obj.downch(1:obj.Base/2);
+            right_ref = obj.downch(obj.Base/2+1:obj.Base);
+            est2_reg = zeros(1, num_pre);
+            bf1 = 0;
+            bf2 = 0;
+            for i = 1:num_pre-1
+                chirp2est = rx_preamb_comp1(i*obj.Base-obj.Base+1:i*obj.Base);
+                left_half = chirp2est(1:obj.Base/2);
+                right_half = chirp2est(obj.Base/2+1:obj.Base);
+
+                chirp2ref = rx_preamb_comp1(i*obj.Base+1:obj.Base*i+obj.Base);
+                left_ref = chirp2ref(1:obj.Base/2);
+                right_ref = chirp2ref(obj.Base/2+1:obj.Base);
+
+                a11(i)=sum(left_half.*conj(right_half));
+                a12(i)=sum(left_half.*conj(right_half));
+% 
+%                 bpf3 = fft( left_half.*left_ref );
+%                 bpf4 = fft( right_half.*right_ref );
+% 
+%                 bf1 = bf1 + abs(bpf3);
+%                 bf2 = bf2 + abs(bpf4);
+%                 [~, max_a3] = max(abs(bf1));
+%                 [~, max_a4] = max(abs(bf2));
+%                 
+%                 a11(i)=bpf3(max_a3);
+%                 a12(i)=bpf4(max_a4);
+%                 est2_reg(i) = -(angle(a11(i))-angle(a12(i)));
+            
+            end
+            disp(angle(sum(a12))*180/pi)
+            disp(angle(sum(a11))*180/pi)
+            est2_reg = -(angle(sum(a12))+angle(sum(a11)))/2;
+%             est2_reg = (angle(sum(a12))-angle(sum(a11)));
+%             est2_reg = mean(est2_reg);
+%             [max_a3] = max(bpf3);
+%             [max_a4] = max(bpf4);
+%             
+%             a11=max(max_a3);
+%             a12=max(max_a4);
+%             est2_reg = (angle(a12)-angle(a11));
+
+            est2 = est2_reg/(pi*obj.Ts);
+%             est2_reg
+            dphi2 = est2*2*pi*obj.Ts/obj.Base;
+
+            [rx_preamb_comp2] = obj.DPHI_COMP(rx_preamb_comp1, dphi2);
+
+            % ~~~~~~~~ 3. Fine estimation ~~~~~~~~ 
+            for i = 1:num_pre-1
+                argumon(i) = sum(rx_preamb_comp2(i*obj.Base-obj.Base+1:obj.Base*i).*conj(rx_preamb_comp2(i*obj.Base+1:obj.Base*i+obj.Base)));
+%                 argumon(i*obj.Base-obj.Base+1:obj.Base*i) = rx_preamb_comp2(i*obj.Base-obj.Base+1:obj.Base*i).*conj(rx_preamb_comp2(i*obj.Base+1:obj.Base*i+obj.Base));
+            end
+            [arg] = sum(argumon);
+            est3 = -angle(arg)/(2*pi*obj.Ts);
+            dphi3 = est3*2*pi*obj.Ts/obj.Base; % сдвиг
+
+            [rx_preamb_comp3] = obj.DPHI_COMP(rx_preamb_comp2, dphi3);
+
+            % ~~~~~~~~ Debugging ~~~~~~~~ 
+            est_full = est1 + est2 + est3;
+            freq_data = {est_full, est1, est2, est3};
+
+            % ~~~~~~~~ Correcting Payload signal ~~~~~~~~  
+            dphi_full = dphi1+dphi2+dphi3;
+            [corrected_signal] = obj.DPHI_COMP(input_signal, dphi_full);
+            corrected_preamb = corrected_signal(1:num_pre*obj.Base);
+            corrected_signal = corrected_signal(num_pre*obj.Base+1:end);
+        end
+
+        
+        function [freq_data, corrected_preamb, corrected_signal] = LORA_FREQ_ESTIM_ghan(obj, input_signal, num_pre)
+        
+            % ~~~~~~~~ Description ~~~~~~~~ 
+            %   input_signal - preamble+payload signals
+            %   N - length of the one chirp
+            %   num_pre - num of the preambles
+            
+            % ~~~~~~~~ Initializtion ~~~~~~~~
+            % Extract payload and preamble signals
+            rx_preamb = input_signal(1:obj.Base*num_pre);
+
+            % ~~~~~~~~ 1. Coarse estimation ~~~~~~~~ 
+            [est1, dphi1] = obj.COARSE_FREQ_ESTIM(rx_preamb, num_pre);
+            [rx_preamb_comp1] = obj.DPHI_COMP(rx_preamb, dphi1);
+
+%             % ~~~~~~~~ 3. Fine estimation ~~~~~~~~ 
+            for i = 1:num_pre-1
+                argumon(i) = sum(rx_preamb_comp1(i*obj.Base-obj.Base+1:obj.Base*i).*conj(rx_preamb_comp1(i*obj.Base+1:obj.Base*i+obj.Base)));
+            end
+            [arg] = sum(argumon);
+            est3 = -angle(arg)/(2*pi*obj.Ts);
+            dphi3 = est3*2*pi*obj.Ts/obj.Base; % сдвиг
+%             % ~~~~~~~~ 3. Golden rectangle ~~~~~~~~ 
+%             acc = 1;                          % Точность оценки
+%             fps = obj.BW/obj.Base; % Определяем Hz/samp
+%             k=1:obj.Base;                            % массив для ускорения расчетов
+%             
+%             a = -0.5*fps; % левая граница корр функции
+%             b = 0.5*fps;  % правая граница корр функции
+%             
+%             g = 0.618;     % число золотого сечения
+%             
+%             lam = a+(1-g)*(b - a); % первичная оценка на правом интервале
+%             Mu = a + g*(b - a);    % первичная оценка на левом интервале
+%             
+%             for n=1:num_pre
+%                 r = rx_preamb_comp1(n*obj.Base-obj.Base+1:obj.Base*n); % один чирп преамбулы
+%                 i=1;
+%                 while (b(i)-a(i))>acc
+%                     
+%                     % частоты для вычисления корр функции
+%                     fd1 = lam(i);
+%                     fd2 = Mu(i);
+%                     
+%                     % формируем чирпы содержащих скомпенсированные частоты
+%                     Local_chirp1 = exp(-1i*2*pi*(fd1*(k+obj.Base))/obj.BW);
+%                     Local_chirp2 = exp(-1i*2*pi*(fd2*(k+obj.Base))/obj.BW);
+%                     
+%                     % Компенсируем у преамбулы сдвиг, находим функцию Z(f) в точке df
+%                     Zi1 = r.*Local_chirp1;
+%                     Zi2 = r.*Local_chirp2;
+%                     
+%                     % Находим функцию F(f) в точке df
+%                     Ri1(i) =  abs(sum((Zi1.*obj.downch)));
+%                     Ri2(i) =  abs(sum((Zi2.*obj.downch)));
+%                 
+%                     % Выявляем новый интервал поиска экстремума
+%                     if Ri1(i)<Ri2(i)
+%                         a(i+1)=lam(i);
+%                         b(i+1)=b(i);
+%                         lam(i+1)=Mu(i);
+%                         
+%                         Mu(i+1) = a(i+1)+g*(b(i+1)-a(i+1)); 
+%                     end
+%                     if Ri1(i)>Ri2(i)
+%                         a(i+1)=a(i);
+%                         b(i+1)=Mu(i);
+%                         Mu(i+1)=lam(i);
+%                         lam(i+1) = a(i+1)+(1-g)*(b(i+1)-a(i+1));
+%                     end
+%                     i=i+1;
+%                 end
+%                 est_sqr(n) = (b(i)+a(i))/2;
+%             end
+%             est3 = sum(est_sqr)/num_pre;
+%             dphi3 = est3*2*pi*obj.ts; % сдвиг
+
+            [rx_preamb_comp3] = obj.DPHI_COMP(rx_preamb_comp1, dphi3);
+
+            % ~~~~~~~~ Debugging ~~~~~~~~ 
+            est_full = est1 + 0 + est3;
+            freq_data = {est_full, est1, 0, est3};
+
+            % ~~~~~~~~ Correcting Payload signal ~~~~~~~~  
+            dphi_full = dphi1+0+dphi3;
+            [corrected_signal] = obj.DPHI_COMP(input_signal, dphi_full);
+            corrected_preamb = corrected_signal(1:num_pre*obj.Base);
+            corrected_signal = corrected_signal(num_pre*obj.Base+1:end);
         end
 
         %% ================================= LDPC

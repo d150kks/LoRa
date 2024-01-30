@@ -9,9 +9,11 @@ rc_size = 4;
 rc = (SF-rc_size);
 BW = 2e6;
 snr = [-20:1:0];
-nIter = 100;
+nIter = 20;
 
-LORA = myLoRaClass_RSG(SF,BW); %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% LORA = myLoRaClass_RSG(SF,BW); %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+LORA = myLoRaClass_true(SF,BW); %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+LORA.fir_win = 1;
 Base = LORA.Base;
 downch = LORA.downch;
 chirp = LORA.chirp;
@@ -25,33 +27,16 @@ intrlv_state = 13;
 % data = randi([0 1],1, numinfobits); 
 
 %% ================================= LDPC coding
-[cfgLDPCEnc,cfgLDPCDec] = LORA.generateConfigLDPC(5/6, 1944);
-        
-% Number of message bits
-numinfobits = cfgLDPCEnc.NumInformationBits; 
-numcodebits = cfgLDPCEnc.BlockLength; 
+numinfobits = 1200;
 
 % Message/Iformation bits
 data = randi([0 1],1, numinfobits); 
-data_ldpc = ldpcEncode(data.', cfgLDPCEnc).';
-data_ldpc_intrlv = randintrlv(data_ldpc, intrlv_state);
+num_sym = length(data)/rc;
 
-if(1)
-    num_sym = length(data_ldpc_intrlv)/rc;
-else
-    num_sym = ceil(length(data_ldpc_intrlv)/SF);
-    bits2add = SF-mod(length(data_ldpc_intrlv), SF);
-    data_ldpc_intrlv = [data_ldpc_intrlv, zeros(1, bits2add)];
-end
-% (num_sym+8)*Ts*1000
-% numinfobits*(1/((num_sym+8)*Ts))/1024
-% return
 %% ================================= Mодуляция
 % RS
-[mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data_ldpc_intrlv, num_sym);
+[mod_chirp, check_data, check_no_gray] = LORA.lorax_modified_crcrs(data, num_sym);
 
-% % LORA
-% [mod_chirp, check_data, check_no_gray] = LORA.lorax_modified(data_ldpc_intrlv, num_sym, 1);
 tx_preamble = repmat(chirp,1,num_pre);
 tx_downch = repmat(downch,1,num_pre);
 sync_sym = myLoRaClass_RSG(SF+1,BW).downch;
@@ -60,29 +45,17 @@ tx_chirp = [sync_sym, tx_downch, tx_preamble, mod_chirp];
 tx_length = length(tx_chirp);
 
 
-
-save('tx_bits.mat','data')
-save('tx_chirp.mat','tx_chirp')
-return
 %% ================================= BER
 
 % Channel
-% h11 = zeros(1, tx_length);
-% h11(1) = 1;
-% h11(2) = 0.5;
-% h11(5) = 0.3;
-% h11 = load('h.mat')
-h11 = zeros(1, tx_length);
-h11(1) = 1;
-h11(2) = 0.9;
-h11(3) = 0.8;
-h11(5) = 0.8;
-h11(7) = 0.7;
-h11(9) = 0.5;
-h11(11) = 0.45;
-h11(13) = 0.3;
-h11(15) = 0.2;
-h11(16) = 0.1;
+h11 = load('h11.mat').h;
+% h = Channel(1,1,1);
+% save('h11.mat','h')
+% 
+% figure(1)
+% stem(abs(h))
+% return
+h11 = [h11 zeros(1, tx_length-length(h11))];
 H11 = fft(h11);
 
 tx_chirp_h = ifft( fft(tx_chirp).*H11 );
@@ -90,7 +63,7 @@ tx_chirp_h = ifft( fft(tx_chirp).*H11 );
 
 % вводим частотный сдвиг
 fps = BW/Base;
-freq_shift = fps*0.5;
+freq_shift = fps*0.0;
 dphi=freq_shift*2*pi*(1/BW);% сдвиг
 
 for j=1:tx_length
@@ -104,6 +77,27 @@ tx_chirp_hft = tx_chirp_hf;
 
 tic
 % snr = 10;
+
+% c = 1;
+% for i=-30:10
+% [rxSig, var] = awgn(tx_chirp_hft, i, 'measured');
+%     var_log(c) = 10*log10(var);
+%     var_decision(c) = floor(var_log(c)*6/16);
+%     c = c+1;
+% end
+% % if
+% % var_decision(var_decision)
+% % 
+% g = gausswin(17, 1.5).';
+% % g1 = g(6:12);
+% g2 = g(3:15);
+% g3 = g;
+% stem( g )
+% hold on
+% stem( tukeywin(110, 10).')
+% % stem( abs(fft(t(110, 11).')) )
+% return
+
 for n = 1:length(snr)
     fprintf('Iter left: %d\n', length(snr)-n+1) 
 
@@ -120,27 +114,18 @@ for n = 1:length(snr)
         rxSig_corr = rxSig(Base*2+1:end);
 
         % Freq Sync
-%         rx_preamble = rxSig_corr(num_pre*Base+1:num_pre*2*Base);
-%         corrected_signal = rxSig_corr(num_pre*2*Base+1:end);
-        [freq_data, corrected_signal, rx_preamble] = LORA.LORA_FREQ_ESTIM_v3(rxSig_corr, num_pre);
+        rx_preamble = rxSig_corr(num_pre*Base+1:num_pre*2*Base);
+        corrected_signal = rxSig_corr(num_pre*2*Base+1:end);
+%         [freq_data, corrected_signal, rx_preamble] = LORA.LORA_FREQ_ESTIM_v3(rxSig_corr, num_pre);
+%         corrected_signal = rxSig_corr(Base*num_pre*2+1:end);
 
         % Demodulation
         % RS
         [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = LORA.delorax_crcrs( corrected_signal, num_sym, tx_preamble, rx_preamble);
 
-%         % LORA
-%         [soft_bits, hard_bits, sv_decode, sv, fourier] = LORA.delorax_modified( corrected_signal, num_sym, tx_preamble, rx_preamble);
-%         hard_bits = hard_bits(1:end-bits2add);
-%         soft_bits = soft_bits(1:end-bits2add);
-
-
-        % LDPC decoding
-        maxnumiter = 10;
-        rx_data_ldpc = randdeintrlv(soft_bits, intrlv_state);
-        data_decode = ldpcDecode(rx_data_ldpc.', cfgLDPCDec, maxnumiter).';
 
         % подсчет БЕР с учетом задержки
-        err = sum(data_decode~=data);
+        err = sum(hard_bits~=data);
 
         % Increment the error and bit counters
         numErr = numErr + err;        
@@ -165,7 +150,8 @@ title('SNR');
 
 % return
 % 
-% save('lora_crcrs_ber.mat','BER')
+% save('lora_rsg_mod_ber.mat','BER')
+% save('lora_rsg_ber.mat','BER')
 % save('lora_rs_ber.mat','BER')
 % save('snr_crc.mat','snr')
 
