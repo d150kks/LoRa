@@ -1,0 +1,87 @@
+clc
+clear all
+close all
+
+
+clc
+clear all
+close all
+
+%% ================================= Переменные
+% коэффициенты
+SF = 7;        % коэффициент расширения спектра (от 7 до 12)
+rc_size = 4;
+rc = (SF-rc_size);
+BW = 125e3;
+nIter = 10000;
+
+LORA = myLoRaClass_true(SF,BW);
+Base = LORA.Base;
+downch = LORA.downch;
+chirp = LORA.chirp;
+ts = LORA.ts;
+
+num_sym = 1;
+numinfobits = SF*num_sym;
+data = randi([0 1],1, numinfobits); 
+
+%% =================================  Modulation
+% n_pre = num_pre_list(n);
+n_pre = 4;
+[mod_chirp, check_data, check_no_gray] = LORA.lorax_modified(data, num_sym, 1);
+tx_preamble = repmat(chirp,1,n_pre);
+tx_downch = repmat(downch,1,n_pre);
+
+tx_chirp = [tx_preamble, tx_preamble, mod_chirp];
+% tx_chirp = [tx_preamble, mod_chirp];
+num_sym_tx = length(tx_chirp)./Base;
+
+%% ================================= Канал (AWGN + Phase shift)
+tx_chirp_noise = awgn(tx_chirp, 0, 'measured');
+tx_chirp_noise = [zeros(1, 100), tx_chirp_noise];
+% tx_chirp_noise = circshift(tx_chirp_noise, 1);
+
+%% ================================= Detection
+% ~~~~~~~~ Demodulation ~~~~~~~~
+for i = 1:num_sym_tx
+    d = tx_chirp_noise(Base*i-Base+1:Base*i).*downch;   % перемножаем входной и опорный ОБРАТНый чирп
+    
+    fourier = abs(fft(d));            % переводим результат в область частот %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    [peak_code, indexMax] = max( fourier ); % находим щелчок  частоты в чирпе
+%     [peak_decode, indexMaxGray] = max( fourier(obj.grayCode_nonrs+1) ); % находим щелчок  частоты в чирпе
+
+    % вычисляем значение кодового слова исходя из базы сигнала
+    sv(i) = (indexMax-1+1);%10*log10
+    sv_amp(i) = peak_code;
+end
+
+large_downch= repmat(downch, 1, 8);
+for i=1:110
+    large_demod = (large_downch.*tx_chirp_noise(1+i:8*Base+i));
+    large_fft(:,i) = fft(large_demod);
+end
+
+figure(3)
+plot(abs(large_fft))
+return
+
+points2check = [5:8];
+
+figure(1)
+subplot(211)
+stem(sv)
+text(points2check, sv(points2check), num2str(sv(points2check).') )
+subplot(212)
+plot(sv_amp)
+
+% figure(2)
+% plot(sv, sv_amp, '.')
+
+
+
+
+% x = (1:10)' ;
+% y = rand(size(x)) ;
+% plot(x,y,'.r')
+% hold on
+% text(x,y,num2str(y))

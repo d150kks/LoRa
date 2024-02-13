@@ -67,7 +67,7 @@ classdef myLoRaClass_RSG
             obj.rs_factor = obj.Base/obj.Base_rs;
             obj.rs_peaks = (0:obj.Base_rs-1)*obj.rs_factor+1;
             obj.rs_aos = -obj.rs_factor/2:obj.rs_factor/2;
-            obj.fir_win = gausswin(obj.rs_factor+1).';
+%             obj.fir_win = gausswin(obj.rs_factor+1).';
 
             % ~~~~~~~~ Gray code ~~~~~~~~
             obj.grayCode = zeros(1, obj.Base_rs);
@@ -171,25 +171,40 @@ classdef myLoRaClass_RSG
                 check_data(i) = code_word_rs;                     
                 check_no_gray(i) = code_word;
 
-                cs = single((code_word_rs/obj.Base)*obj.Ts/obj.ts);             % место сдвига
+                cs = code_word_rs;
+%                 cs = single((code_word_rs/obj.Base)*obj.Ts/obj.ts);             % место сдвига
                 
+                % TIME DOMAIN
                 chirp1 = obj.chirp(cs+1:end); % первый чирп
                 chirp2 = obj.chirp(1:cs); % второй чирп
                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = [chirp1, chirp2];
 
-%                 n=1:obj.Base-0;
+%                 if(cs<=16)
+%                     cs=17;
+%                 elseif(cs>=112)
+%                     cs=113;
+%                 end
+
+%                 % FREQ DOMAIN
+%                 n=0:obj.Base-1;
 %                 D = exp(1i*pi*(n.^2+2*cs*n)*(1/(obj.Base)));
 %                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = D;
 
 %                 arg_step = 360/num_sym;
 %                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = D.*exp(1i*i*arg_step*pi/180*sign(randn));
 
-
 %                 fps = obj.BW/obj.Base;
 %                 freq_shift = fps*cs; 
 %                 dphi=freq_shift*2*pi*(1/obj.BW);% сдвиг
 %                 shifting = exp(1i*dphi*(1:obj.Base));
 %                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = obj.chirp.*shifting;
+
+                % ~~~~~~~~ Phase Shift ~~~~~~~~
+                R1 = randi([0, obj.rs_factor])*obj.Base_rs;
+                R2 = randi([0, obj.Base_rs])*obj.rs_factor;
+                phs = ((R1+R2)*pi/obj.Base);
+                mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i).*exp(1i*i*phs*1);
+%                 mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i) = mod_chirp(i*obj.Base-obj.Base+1:obj.Base*i).*exp(1i*i*phs*sign(randn));
 
 
             end 
@@ -201,14 +216,20 @@ classdef myLoRaClass_RSG
 
             % Reduced set vectors and aos
 %             new_win = gausswin(obj.rs_factor+1, 1/sqrt(nvar)).';
+% thresh = median(fourier);
             fourier_rs = zeros(1, obj.Base_rs);
             for rs_peak_idx=1:obj.Base_rs
                 rs_win = obj.CYC_SHIFT(obj.rs_peaks(rs_peak_idx)+obj.rs_aos);
-                fourier_rs(rs_peak_idx) = max( (fourier(rs_win).*obj.fir_win) );
-%                 fourier_rs(rs_peak_idx) = mean( fourier(rs_win).*obj.fir_win );
-%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*obj.fir_win) );
-%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*conj(fourier(rs_win))).*obj.fir_win );
-%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win).*conj(fourier(rs_win))).*obj.fir_win );
+%                 fourier_rs(rs_peak_idx) = max( fourier(rs_win) );
+                fourier_rs(rs_peak_idx) = mean( fourier(rs_win) );
+%                 fourier_rs(rs_peak_idx) = std( (fourier(rs_win)) );
+%                 fourier_rs(rs_peak_idx) = median( fourier(rs_win) );
+%                 fourier_rs(rs_peak_idx) = abs( sum(fourier(rs_win).*conj(fourier(rs_win))) );
+%                 AA = sort(fourier(rs_win));
+%                 thresh = prod(AA).^(1/length(AA));
+%                 AA = sort(abs(fourier(rs_win).*conj(fourier(rs_win))));
+%                 fourier_rs(rs_peak_idx) = sum( AA(AA>thresh) );
+%                 fourier_rs(rs_peak_idx) = sum( AA(ceil(end/2):end) );
             end
 
         end
@@ -229,7 +250,7 @@ classdef myLoRaClass_RSG
             sv = zeros(1,num_sym);
             sv_decode = zeros(1,num_sym);
 
-            % ~~~~~~~~ Demodulation ~~~~~~~~
+            % ~~~~~~~~ Demodulation ~~~~~~~~ .*tukeywin(obj.Base).'
             for i = 1:num_sym
                 d = mod_chirp(obj.Base*i-obj.Base+1:obj.Base*i).*obj.downch;   % перемножаем входной и опорный ОБРАТНый чирп
                 
@@ -257,9 +278,40 @@ classdef myLoRaClass_RSG
                     LLR = -(1/nvar)*(min( (peak_code-fourier(m0g)).^2 ) - min( (peak_code-fourier(m1g)).^2 ));
                     soft_bits(i*obj.SF-obj.SF+nBit) = LLR;
                 end
-            end
-            
+            end 
         end
+% FAST
+% chirp_matrix = reshape(mod_chirp, Base, []).';
+% dechirp_matrix = chirp_matrix.*repmat(downch, size(chirp_matrix,1), 1);
+% fourier_matrix = abs(fft(dechirp_matrix, [], 2));
+% [peak_code, indexMax] = max( fourier_matrix, [], 2); % находим щелчок  частоты в чирпе
+% [peak_decode, indexMaxGray] = max( fourier_matrix(:,LORA.grayCode_nonrs+1), [], 2 ); % находим щелчок  частоты в чирпе
+% 
+% % вычисляем значение кодового слова исходя из базы сигнала
+% sv_gray = indexMax-1;
+% sv_gray_decode = indexMaxGray-1;
+% 
+% % ~~~~~~~~ Soft and Hard Decisions ~~~~~~~~
+% % Hard
+% hard_bits = int2bit(sv_gray_decode, SF).';
+% 
+% 
+% nBit=1:SF;
+% m0 = LORA.M0(:, nBit);
+% m0(m0==0)=[];
+% m0 = reshape(m0, [], SF);
+% m0g = LORA.grayCode_nonrs(m0)+1;
+% 
+% m1 = LORA.M1(:, nBit);
+% m1(m1==0)=[];
+% m1 = reshape(m1, [], SF);
+% m1g = LORA.grayCode_nonrs(m1)+1;
+% 
+% %  = -(1/1)*(min( (peak_code-fourier_matrix(:,m0g)).^2, [],2 ) - min( (peak_code-fourier_matrix(:,m1g)).^2, [],2 ));
+% soft_bits = zeros(1,SF*num_sym);
+% for i=1:size(chirp_matrix,1)
+%     soft_bits(SF*(i-1)+1:SF*i) = -(1/1)*(min( (peak_code(i)-reshape(fourier_matrix(i,m0g), [],SF)).^2 ) - min( (peak_code(i)-reshape(fourier_matrix(i,m1g),[], SF)).^2 ));
+% end
 
         function [soft_bits, hard_bits, sv_rs, sv, fourier, fourier_rs] = delorax_crcrs(obj, mod_chirp, num_sym, varargin)
 
@@ -272,7 +324,6 @@ classdef myLoRaClass_RSG
                 nvar = 1; % 
             end
 
-%             deriv = repmat([1, -1], 1, obj.Base/2);
             hard_bits = zeros(1,obj.RS*num_sym);
             soft_bits = zeros(1,obj.RS*num_sym);
             sv = zeros(1,num_sym);
